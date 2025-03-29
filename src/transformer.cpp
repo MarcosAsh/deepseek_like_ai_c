@@ -4,6 +4,8 @@
 Transformer::Transformer() {}
 
 void Transformer::forward() {
-    std::cout << "Running transformer forward pass..." << std::endl;
-    // Placeholder logic for now
+    MLA mla(8, 8, 2, 4);
+    Tensor input(8, 1);
+    input.fill(1.0f);
+    Tensor out = mla.forward(input);
 }
