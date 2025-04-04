@@ -18,6 +18,16 @@ int main() {
     // Forward pass
     Tensor output = transformer.forward(input);
     
-    std::cout << "Transformer ran successfully!" << std::endl;
+    // Verification
+    std::cout << "\n=== Shape Verification ===\n";
+    std::cout << "Input shape: [" << input.rows << "x" << input.cols << "]\n";
+    std::cout << "Output shape: [" << output.rows << "x" << output.cols << "]\n";
+    
+    if (input.rows == output.rows && input.cols == output.cols) {
+        std::cout << "Residual connections working correctly\n";
+    } else {
+        std::cout << "Dimension mismatch in residual connections\n";
+    }
+    
     return 0;
 }

@@ -37,3 +37,12 @@ float Tensor::dot(const Tensor& other) const {
         sum += data[i] * other.data[i];
     return sum;
 }
+
+Tensor Tensor::operator+(const Tensor& other) const {
+    assert(rows == other.rows && cols == other.cols && "Tensor dimension mismatch in addition");
+    Tensor result(rows, cols);
+    for (size_t i = 0; i < data.size(); ++i) {
+        result.data[i] = data[i] + other.data[i];
+    }
+    return result;
+}

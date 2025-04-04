@@ -17,4 +17,6 @@ public:
 
     Tensor matmul(const Tensor& other) const;
     float dot(const Tensor& other) const;
+
+    Tensor operator+(const Tensor& other) const;
 };
