@@ -1,0 +1,15 @@
+<pad>
+<unk>
+<s>
+</s>
+Hello
+world
+!
+This
+is
+a
+test
+.
+Th
+is
+est
