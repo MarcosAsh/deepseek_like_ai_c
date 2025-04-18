@@ -7,10 +7,10 @@ int main() {
     const int input_dim = 64;
     const int hidden_dim = 64;
     const int n_heads = 4;
-    const int compress_dim = 16;
+    // const int compress_dim = 16; // not used for feed-forward version
     
     // Create transformer with proper parameters
-    Transformer t(num_layers, input_dim, hidden_dim, n_heads, compress_dim);
+    Transformer t(num_layers, input_dim, hidden_dim, n_heads);
     
     // Create test input tensor
     Tensor input(input_dim, 1);

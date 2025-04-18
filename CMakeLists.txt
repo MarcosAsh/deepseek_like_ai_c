@@ -4,14 +4,19 @@ project(DeepSeek_AI)
 set(CMAKE_CXX_STANDARD 17)
 
 # Find all source files
-file(GLOB_RECURSE SOURCES "src/*.cpp")
+# Collect all source files
+file(GLOB_RECURSE ALL_SRC "src/*.cpp")
 file(GLOB_RECURSE TEST_SOURCES "test/*.cpp")
 
-# Main executable
-add_executable(deepseek_ai ${SOURCES})
+# Separate library sources (exclude main.cpp)
+list(FILTER ALL_SRC EXCLUDE REGEX "src/main\\.cpp$")
+set(LIB_SOURCES ${ALL_SRC})
 
-# Test executable
-add_executable(transformer_test ${TEST_SOURCES} ${SOURCES})
+# Main executable (includes main.cpp)
+add_executable(deepseek_ai src/main.cpp ${LIB_SOURCES})
+
+# Test executable (uses test mains)
+add_executable(transformer_test ${TEST_SOURCES} ${LIB_SOURCES})
 
 # Include directories
 target_include_directories(deepseek_ai PRIVATE include)

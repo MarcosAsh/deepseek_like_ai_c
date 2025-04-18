@@ -16,6 +16,8 @@ public:
     void print(const std::string& name = "")const;
 
     Tensor matmul(const Tensor& other) const;
+    // Return a transposed copy of this tensor
+    Tensor transpose() const;
     float dot(const Tensor& other) const;
 
     Tensor operator+(const Tensor& other) const;

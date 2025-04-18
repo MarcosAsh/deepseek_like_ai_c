@@ -14,7 +14,7 @@ Linear::Linear(int input_size, int output_size)
     bias.fill(0.1f);  // Small constant bias
 }
 
-Tensor Linear::forward(const Tensor& input) {
+Tensor Linear::forward(const Tensor& input) const {
     assert(input.cols == 1 && "Linear layer expects column vector");
     assert(input.rows == weights.cols && "Input dimension mismatch");
     

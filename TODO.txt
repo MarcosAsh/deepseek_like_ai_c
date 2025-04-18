@@ -1,0 +1,12 @@
+# Next Steps for End-to-End AD Transformer Training
+
+- Replace MSE loss with softmax cross-entropy (use AD softmax + log)
+- Implement AdamW optimizer with weight decay and gradient clipping
+- Add mini-batching and data shuffling for efficient training
+- Create checkpoint save/load functionality for model parameters
+- Add validation loop and compute perplexity on held-out data
+- Implement inference/generation: greedy search, sampling, beam search
+- Write unit tests for AD layers (numeric gradient checking)
+- Integrate a BLAS or multi-threaded backend for tensor matmuls
+- Extend AD engine to support dropout backward and other activations
+- Add logging, configuration parsing, and training metrics tracking

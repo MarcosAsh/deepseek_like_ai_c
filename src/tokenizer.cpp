@@ -15,13 +15,24 @@ void Tokenizer::load_vocab(const std::string& vocab_file) {
 
     std::string line;
     while (std::getline(file, line)) {
+        // Skip empty lines
+        if (line.empty()) continue;
         std::istringstream iss(line);
         std::string token;
+        // Read token
+        if (!(iss >> token)) continue;
         int id;
-        if (!(iss >> token >> id)) {
-            throw std::runtime_error("Invalid line in vocabulary file: " + line);
+        if (iss >> id) {
+            // explicit ID provided
+        } else {
+            // assign next available ID
+            id = static_cast<int>(vocab.size());
         }
-        vocab.push_back(token);
+        // Ensure vocab vector can hold at index id
+        if (id >= static_cast<int>(vocab.size())) {
+            vocab.resize(id + 1);
+        }
+        vocab[id] = token;
         token_to_id[token] = id;
     }
 }

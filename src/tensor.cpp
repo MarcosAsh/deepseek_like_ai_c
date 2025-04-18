@@ -46,3 +46,13 @@ Tensor Tensor::operator+(const Tensor& other) const {
     }
     return result;
 }
+
+Tensor Tensor::transpose() const {
+    Tensor result(cols, rows);
+    for (int i = 0; i < rows; ++i) {
+        for (int j = 0; j < cols; ++j) {
+            result.data[j * rows + i] = data[i * cols + j];
+        }
+    }
+    return result;
+}
