@@ -73,6 +73,21 @@ std::shared_ptr<ADTensor> add(const std::shared_ptr<ADTensor>& a,
     });
     return out;
 }
+// natural logarithm
+std::shared_ptr<ADTensor> log_ad(const std::shared_ptr<ADTensor>& a) {
+    Tensor v(a->val.rows, a->val.cols);
+    for (size_t i = 0; i < v.data.size(); ++i) {
+        v.data[i] = std::log(a->val.data[i]);
+    }
+    auto out = std::make_shared<ADTensor>(v);
+    out->deps.emplace_back(a, [a, out]() {
+        for (size_t i = 0; i < a->grad.data.size(); ++i) {
+            // d/dx log(x) = 1/x
+            a->grad.data[i] += out->grad.data[i] / a->val.data[i];
+        }
+    });
+    return out;
+}
 // Transpose an ADTensor
 std::shared_ptr<ADTensor> transpose(const std::shared_ptr<ADTensor>& a) {
     Tensor v = a->val.transpose();

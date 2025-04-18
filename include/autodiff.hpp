@@ -33,6 +33,8 @@ std::shared_ptr<ADTensor> matmul(const std::shared_ptr<ADTensor>& a,
                                  const std::shared_ptr<ADTensor>& b);
 std::shared_ptr<ADTensor> tanh_ad(const std::shared_ptr<ADTensor>& a);
 std::shared_ptr<ADTensor> exp_ad(const std::shared_ptr<ADTensor>& a);
+// Elementwise natural logarithm
+std::shared_ptr<ADTensor> log_ad(const std::shared_ptr<ADTensor>& a);
 // Elementwise square root
 std::shared_ptr<ADTensor> sqrt_ad(const std::shared_ptr<ADTensor>& a);
 // Elementwise reciprocal (1/x)

@@ -73,8 +73,8 @@ int main(int argc, char** argv) {
     ADPositionalEncoding ad_posenc(embed_dim, max_len);
     ADTransformer ad_transformer(num_layers, embed_dim, hidden_dim, n_heads);
     ADLinear ad_lm_head(embed_dim, (int)tokenizer.vocab_size());
-    // Optimizer
-    SGD optimizer(lr);
+    // Optimizer: AdamW with default betas, eps, weight_decay=0.01, clip_norm=1.0
+    AdamW optimizer(lr);
 
     // Training loop
     int steps_per_epoch = (N - 1) / seq_len;
@@ -115,10 +115,21 @@ int main(int argc, char** argv) {
                 }
             }
             auto target_ad = make_ad(target_tensor);
-            // MSE loss: sum((logits - target)^2)
-            auto diff_ad = sub(logits_ad, target_ad);
-            auto sq_ad   = mul(diff_ad, diff_ad);
-            auto loss_ad = sum(sq_ad);
+            // Cross-entropy loss via AD:
+            // sum1 = sum(logits * target)  (sum of true class logits)
+            auto prod_ad = mul(logits_ad, target_ad);
+            auto sum1_ad = sum(prod_ad);
+            // denom: sum_exp per column
+            Tensor ones_row_t(1, V);
+            ones_row_t.data.assign(V, 1.0f);
+            auto ones_row = make_ad(ones_row_t);
+            auto exp_ad_logits = exp_ad(logits_ad);
+            auto denom_row = matmul(ones_row, exp_ad_logits);    // [1 x seq_len]
+            // log denom per column
+            auto log_denoms = log_ad(denom_row);                // [1 x seq_len]
+            auto sum2_ad = sum(log_denoms);
+            // loss = sum(log_denoms) - sum(true_logits)
+            auto loss_ad = sub(sum2_ad, sum1_ad);
             // Backward
             loss_ad->backward();
             // Update parameters
@@ -129,7 +140,7 @@ int main(int argc, char** argv) {
             ++count;
         }
         float avg_loss = total_loss / count;
-        std::cout << "Epoch " << epoch << ": Avg MSE loss = " << avg_loss << "\n";
+        std::cout << "Epoch " << epoch << ": Avg XEnt loss = " << avg_loss << "\n";
         loss_history.push_back(avg_loss);
     }
     std::cout << "Training complete.\n";
