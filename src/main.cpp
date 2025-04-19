@@ -12,7 +12,50 @@
 #include <cmath>
 #include <algorithm>
 #include <numeric>
+#include <random>
 #include <string>
+#include <limits>
+#include <cstdint>
+
+// Checkpoint utilities: save/load model parameters
+static bool save_checkpoint(const std::string& path) {
+    auto& params = get_parameters();
+    std::ofstream out(path, std::ios::binary);
+    if (!out) { std::cerr << "Error: cannot open checkpoint file for writing: " << path << "\n"; return false; }
+    uint32_t num = params.size();
+    out.write(reinterpret_cast<const char*>(&num), sizeof(num));
+    for (auto& p : params) {
+        uint32_t r = (uint32_t)p->val.rows;
+        uint32_t c = (uint32_t)p->val.cols;
+        out.write(reinterpret_cast<const char*>(&r), sizeof(r));
+        out.write(reinterpret_cast<const char*>(&c), sizeof(c));
+        out.write(reinterpret_cast<const char*>(p->val.data.data()), r * c * sizeof(float));
+    }
+    return true;
+}
+static bool load_checkpoint(const std::string& path) {
+    auto& params = get_parameters();
+    std::ifstream in(path, std::ios::binary);
+    if (!in) { std::cerr << "Error: cannot open checkpoint file for reading: " << path << "\n"; return false; }
+    uint32_t num = 0;
+    in.read(reinterpret_cast<char*>(&num), sizeof(num));
+    if (num != params.size()) {
+        std::cerr << "Error: checkpoint parameter count mismatch (" << num << " vs " << params.size() << ")\n";
+        return false;
+    }
+    for (auto& p : params) {
+        uint32_t r = 0, c = 0;
+        in.read(reinterpret_cast<char*>(&r), sizeof(r));
+        in.read(reinterpret_cast<char*>(&c), sizeof(c));
+        if (r != (uint32_t)p->val.rows || c != (uint32_t)p->val.cols) {
+            std::cerr << "Error: checkpoint param shape mismatch (" << r << "x" << c
+                      << " vs " << p->val.rows << "x" << p->val.cols << ")\n";
+            return false;
+        }
+        in.read(reinterpret_cast<char*>(p->val.data.data()), r * c * sizeof(float));
+    }
+    return true;
+}
 
 // Utility: softmax + cross-entropy loss and gradient
 static float softmax_cross_entropy(const std::vector<float>& logits,
@@ -34,25 +77,118 @@ static float softmax_cross_entropy(const std::vector<float>& logits,
     }
     return loss;
 }
+// Simple ASCII sparkline for loss visualization
+static std::string sparkline(const std::vector<float>& data) {
+    if (data.empty()) return std::string();
+    static const std::vector<std::string> levels = {"▁","▂","▃","▄","▅","▆","▇","█"};
+    float mn = *std::min_element(data.begin(), data.end());
+    float mx = *std::max_element(data.begin(), data.end());
+    float range = mx - mn;
+    std::string s;
+    for (auto v : data) {
+        int idx = 0;
+        if (range > 0.0f) {
+            float norm = (v - mn) / range;
+            idx = std::min<int>((int)levels.size()-1, std::max<int>(0, int(norm * (levels.size()-1) + 0.5f)));
+        }
+        s += levels[idx];
+    }
+    return s;
+}
 
 int main(int argc, char** argv) {
-    if (argc < 3 || std::string(argv[1]) != "--train") {
-        std::cout << "Usage: deepseek_ai --train data.txt\n";
+    // Default configuration
+    std::string mode;
+    std::string data_file;
+    std::string vocab_file = "input_files/vocab.txt";
+    int embed_dim = 64;
+    int hidden_dim = 64;
+    int n_heads = 4;
+    int num_layers = 3;
+    int max_len = 128;
+    int seq_len = 32;
+    int epochs = 5;
+    int batch_size = 16;
+    float lr = 1e-3f;
+    std::string resume_file;
+    std::string save_file = "checkpoint.bin";
+    std::string valid_file;
+    int patience = 2;
+
+    // Parse command-line args (manual parser)
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "--train" && i + 1 < argc) {
+            mode = "train";
+            data_file = argv[++i];
+        } else if (arg == "--vocab" && i + 1 < argc) {
+            vocab_file = argv[++i];
+        } else if (arg == "--embed_dim" && i + 1 < argc) {
+            embed_dim = std::stoi(argv[++i]);
+        } else if (arg == "--hidden_dim" && i + 1 < argc) {
+            hidden_dim = std::stoi(argv[++i]);
+        } else if (arg == "--n_heads" && i + 1 < argc) {
+            n_heads = std::stoi(argv[++i]);
+        } else if (arg == "--num_layers" && i + 1 < argc) {
+            num_layers = std::stoi(argv[++i]);
+        } else if (arg == "--max_len" && i + 1 < argc) {
+            max_len = std::stoi(argv[++i]);
+        } else if (arg == "--seq_len" && i + 1 < argc) {
+            seq_len = std::stoi(argv[++i]);
+        } else if (arg == "--batch_size" && i + 1 < argc) {
+            batch_size = std::stoi(argv[++i]);
+        } else if (arg == "--epochs" && i + 1 < argc) {
+            epochs = std::stoi(argv[++i]);
+        } else if (arg == "--lr" && i + 1 < argc) {
+            lr = std::stof(argv[++i]);
+        } else if (arg == "--resume" && i + 1 < argc) {
+            resume_file = argv[++i];
+        } else if (arg == "--save" && i + 1 < argc) {
+            save_file = argv[++i];
+        } else if (arg == "--valid" && i + 1 < argc) {
+            valid_file = argv[++i];
+        } else if (arg == "--patience" && i + 1 < argc) {
+            patience = std::stoi(argv[++i]);
+        } else if (arg == "--help") {
+            std::cout << "Usage: deepseek_ai --train data.txt [options]\n"
+                      << "Options:\n"
+                      << "  --vocab PATH         vocabulary file (default: input_files/vocab.txt)\n"
+                      << "  --embed_dim N        embedding dimension (default: 64)\n"
+                      << "  --hidden_dim N       hidden dimension (default: 64)\n"
+                      << "  --n_heads N          number of attention heads (default: 4)\n"
+                      << "  --num_layers N       number of transformer layers (default: 3)\n"
+                      << "  --max_len N          maximum sequence length (default: 128)\n"
+                      << "  --seq_len N          training sequence length (default: 32)\n"
+                      << "  --batch_size N       mini-batch size (default: 16)\n"
+                      << "  --epochs N           number of training epochs (default: 5)\n"
+                      << "  --lr FLOAT           learning rate (default: 1e-3)\n"
+                      << "  --resume PATH        checkpoint file to load (default: none)\n"
+                      << "  --save PATH          checkpoint file to save (default: checkpoint.bin)\n"
+                      << "  --valid PATH         validation data file (default: none)\n"
+                      << "  --patience N         early stopping patience (default: 2 epochs)\n";
+            return 0;
+        } else {
+            std::cerr << "Unknown option or missing argument: " << arg << "\n";
+            return 1;
+        }
+    }
+    if (mode != "train" || data_file.empty()) {
+        std::cerr << "Usage: deepseek_ai --train data.txt [--vocab vocab.txt] [--seq_len N] ...\n";
         return 1;
     }
-    // Training settings
-    const std::string data_file = argv[2];
-    const int embed_dim = 64;
-    const int hidden_dim = 64;
-    const int n_heads = 4;
-    const int num_layers = 3;
-    const int max_len = 128;
-    const int seq_len = 32;
-    const int epochs = 5;
-    const float lr = 1e-3f;
+    // Print configuration
+    std::cout << "Training on: " << data_file << "\n"
+              << "Vocab file: " << vocab_file << "\n"
+              << "embed_dim=" << embed_dim << " hidden_dim=" << hidden_dim
+              << " n_heads=" << n_heads << " num_layers=" << num_layers << "\n"
+              << "max_len=" << max_len << " seq_len=" << seq_len
+              << " batch_size=" << batch_size << " epochs=" << epochs
+              << " lr=" << lr << "\n"
+              << "Validation file: " << (valid_file.empty() ? std::string("none") : valid_file) << "\n"
+              << "Early stopping patience: " << patience << "\n";
 
     // Load tokenizer and dataset
-    Tokenizer tokenizer("input_files/vocab.txt");
+    Tokenizer tokenizer(vocab_file);
     std::ifstream in(data_file);
     if (!in) {
         std::cerr << "Cannot open data file: " << data_file << "\n";
@@ -67,6 +203,28 @@ int main(int argc, char** argv) {
         std::cerr << "Not enough tokens in data (need > " << seq_len + 1 << ")\n";
         return 1;
     }
+    // Prepare validation data if provided
+    std::vector<int> val_tokens;
+    std::vector<int> val_starts;
+    if (!valid_file.empty()) {
+        std::ifstream in_v(valid_file);
+        if (!in_v) {
+            std::cerr << "Cannot open validation file: " << valid_file << "\n";
+            return 1;
+        }
+        std::ostringstream vss;
+        vss << in_v.rdbuf();
+        std::string vtext = vss.str();
+        val_tokens = tokenizer.encode(vtext);
+        int M = val_tokens.size();
+        if (M < seq_len + 1) {
+            std::cerr << "Not enough tokens in validation data (need > " << seq_len + 1 << ")\n";
+            return 1;
+        }
+        for (int s = 0; s + seq_len < M; s += seq_len) {
+            val_starts.push_back(s);
+        }
+    }
 
     // AD Model components
     ADEmbedding ad_embed(tokenizer.vocab_size(), embed_dim);
@@ -75,73 +233,150 @@ int main(int argc, char** argv) {
     ADLinear ad_lm_head(embed_dim, (int)tokenizer.vocab_size());
     // Optimizer: AdamW with default betas, eps, weight_decay=0.01, clip_norm=1.0
     AdamW optimizer(lr);
+    // Load checkpoint if requested
+    if (!resume_file.empty()) {
+        if (!load_checkpoint(resume_file)) return 1;
+        std::cout << "Loaded checkpoint from " << resume_file << "\n";
+    }
 
-    // Training loop
+    // Training loop with mini-batching and data shuffling
     int steps_per_epoch = (N - 1) / seq_len;
+    // Prepare sequence start indices
+    std::vector<int> starts;
+    for (int s = 0; s + seq_len < N; s += seq_len) {
+        starts.push_back(s);
+    }
     std::vector<float> loss_history;
+    std::vector<float> val_history;
     std::vector<float> grad_z;
     grad_z.reserve(tokenizer.vocab_size());
+    // Random generator for shuffling
+    std::mt19937 rng(1234);
+    // Early stopping state
+    int no_improve = 0;
+    float best_val_loss = std::numeric_limits<float>::infinity();
     for (int epoch = 1; epoch <= epochs; ++epoch) {
+        // Shuffle data indices
+        std::shuffle(starts.begin(), starts.end(), rng);
         float total_loss = 0.0f;
         int count = 0;
-        for (int start = 0; start + seq_len < N; start += seq_len) {
-            // Zero gradients
+        // Iterate over mini-batches
+        for (size_t batch_start = 0; batch_start < starts.size(); batch_start += batch_size) {
             optimizer.zero_grad();
-            // Prepare input and target
-            std::vector<int> input_ids(data_tokens.begin() + start,
-                                       data_tokens.begin() + start + seq_len);
-            std::vector<int> target_ids(data_tokens.begin() + start + 1,
-                                        data_tokens.begin() + start + seq_len + 1);
-            // AD forward
-            auto embed_ad = ad_embed.forward(input_ids);
-            auto pos_ad   = ad_posenc.forward(seq_len);
-            // Debug shapes
-            std::cout << "DEBUG: embed shape: [" << embed_ad->val.rows
-                      << "x" << embed_ad->val.cols << "]\n";
-            std::cout << "DEBUG: pos shape:   [" << pos_ad->val.rows
-                      << "x" << pos_ad->val.cols << "]\n";
-            
-            auto x_ad     = add(embed_ad, pos_ad);
-            auto h_ad     = ad_transformer.forward(x_ad);
-            auto logits_ad = ad_lm_head.forward(h_ad);
-            // Build target one-hot [vocab x seq_len]
-            int V = tokenizer.vocab_size();
-            Tensor target_tensor(V, seq_len);
-            target_tensor.data.assign(V * seq_len, 0.0f);
-            for (int t = 0; t < seq_len; ++t) {
-                int id = target_ids[t];
-                if (id >= 0 && id < V) {
-                    target_tensor.data[id * seq_len + t] = 1.0f;
+            size_t batch_end = std::min(batch_start + batch_size, starts.size());
+            // Process each sequence in the batch
+            for (size_t idx = batch_start; idx < batch_end; ++idx) {
+                int start = starts[idx];
+                // Prepare input and target
+                std::vector<int> input_ids(data_tokens.begin() + start,
+                                           data_tokens.begin() + start + seq_len);
+                std::vector<int> target_ids(data_tokens.begin() + start + 1,
+                                            data_tokens.begin() + start + seq_len + 1);
+                // AD forward
+                auto embed_ad = ad_embed.forward(input_ids);
+                auto pos_ad   = ad_posenc.forward(seq_len);
+                // Debug shapes
+                std::cout << "DEBUG: embed shape: [" << embed_ad->val.rows
+                          << "x" << embed_ad->val.cols << "]\n";
+                std::cout << "DEBUG: pos shape:   [" << pos_ad->val.rows
+                          << "x" << pos_ad->val.cols << "]\n";
+
+                auto x_ad     = add(embed_ad, pos_ad);
+                auto h_ad     = ad_transformer.forward(x_ad);
+                auto logits_ad = ad_lm_head.forward(h_ad);
+                // Build target one-hot [vocab x seq_len]
+                int V = tokenizer.vocab_size();
+                Tensor target_tensor(V, seq_len);
+                target_tensor.data.assign(V * seq_len, 0.0f);
+                for (int t = 0; t < seq_len; ++t) {
+                    int id = target_ids[t];
+                    if (id >= 0 && id < V) {
+                        target_tensor.data[id * seq_len + t] = 1.0f;
+                    }
                 }
+                auto target_ad = make_ad(target_tensor);
+                // Cross-entropy loss via AD:
+                // sum1 = sum(logits * target)  (sum of true class logits)
+                auto prod_ad = mul(logits_ad, target_ad);
+                auto sum1_ad = sum(prod_ad);
+                // denom: sum_exp per column
+                Tensor ones_row_t(1, V);
+                ones_row_t.data.assign(V, 1.0f);
+                auto ones_row = make_ad(ones_row_t);
+                auto exp_ad_logits = exp_ad(logits_ad);
+                auto denom_row = matmul(ones_row, exp_ad_logits);    // [1 x seq_len]
+                // log denom per column
+                auto log_denoms = log_ad(denom_row);                // [1 x seq_len]
+                auto sum2_ad = sum(log_denoms);
+                // loss = sum(log_denoms) - sum(true_logits)
+                auto loss_ad = sub(sum2_ad, sum1_ad);
+                // Backward (accumulate gradients)
+                loss_ad->backward();
+                // Accumulate loss
+                float loss = loss_ad->val.data[0];
+                total_loss += loss;
+                ++count;
             }
-            auto target_ad = make_ad(target_tensor);
-            // Cross-entropy loss via AD:
-            // sum1 = sum(logits * target)  (sum of true class logits)
-            auto prod_ad = mul(logits_ad, target_ad);
-            auto sum1_ad = sum(prod_ad);
-            // denom: sum_exp per column
-            Tensor ones_row_t(1, V);
-            ones_row_t.data.assign(V, 1.0f);
-            auto ones_row = make_ad(ones_row_t);
-            auto exp_ad_logits = exp_ad(logits_ad);
-            auto denom_row = matmul(ones_row, exp_ad_logits);    // [1 x seq_len]
-            // log denom per column
-            auto log_denoms = log_ad(denom_row);                // [1 x seq_len]
-            auto sum2_ad = sum(log_denoms);
-            // loss = sum(log_denoms) - sum(true_logits)
-            auto loss_ad = sub(sum2_ad, sum1_ad);
-            // Backward
-            loss_ad->backward();
-            // Update parameters
+            // Update parameters after processing the batch
             optimizer.step();
-            // Accumulate loss
-            float loss = loss_ad->val.data[0];
-            total_loss += loss;
-            ++count;
         }
         float avg_loss = total_loss / count;
         std::cout << "Epoch " << epoch << ": Avg XEnt loss = " << avg_loss << "\n";
         loss_history.push_back(avg_loss);
+        // Save checkpoint after each epoch
+        if (!save_file.empty()) {
+            if (!save_checkpoint(save_file))
+                std::cerr << "Error: failed saving checkpoint to " << save_file << "\n";
+            else
+                std::cout << "Saved checkpoint to " << save_file << "\n";
+        }
+        // Validation and early stopping
+        if (!valid_file.empty()) {
+            float val_loss = 0.0f;
+            int val_count = 0;
+            for (int vs : val_starts) {
+                // Prepare input and target
+                std::vector<int> inp(val_tokens.begin() + vs,
+                                     val_tokens.begin() + vs + seq_len);
+                std::vector<int> tgt(val_tokens.begin() + vs + 1,
+                                     val_tokens.begin() + vs + seq_len + 1);
+                auto embed_v = ad_embed.forward(inp);
+                auto pos_v   = ad_posenc.forward(seq_len);
+                auto x_v     = add(embed_v, pos_v);
+                auto h_v     = ad_transformer.forward(x_v);
+                auto logits_v= ad_lm_head.forward(h_v);
+                // Compute cross-entropy per time step
+                int V = tokenizer.vocab_size();
+                std::vector<float> temp_grad(V);
+                for (int t = 0; t < seq_len; ++t) {
+                    std::vector<float> logit_t(V);
+                    for (int i = 0; i < V; ++i) {
+                        logit_t[i] = logits_v->val.data[i * seq_len + t];
+                    }
+                    val_loss += softmax_cross_entropy(logit_t, tgt[t], temp_grad);
+                    ++val_count;
+                }
+            }
+            float avg_val = val_loss / val_count;
+            std::cout << "Validation loss = " << avg_val << "\n";
+            val_history.push_back(avg_val);
+            if (avg_val < best_val_loss) {
+                best_val_loss = avg_val;
+                no_improve = 0;
+            } else {
+                no_improve++;
+                std::cout << "No improvement (" << no_improve << "/" << patience << ")\n";
+            }
+            if (no_improve >= patience) {
+                std::cout << "Early stopping at epoch " << epoch << "\n";
+                break;
+            }
+        }
+        // Display loss trends as sparkline
+        std::cout << "Train trend: " << sparkline(loss_history) << "\n";
+        if (!val_history.empty()) {
+            std::cout << "Valid trend: " << sparkline(val_history) << "\n";
+        }
     }
     std::cout << "Training complete.\n";
     return 0;
