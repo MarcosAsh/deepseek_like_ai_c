@@ -21,4 +21,7 @@ public:
     float dot(const Tensor& other) const;
 
     Tensor operator+(const Tensor& other) const;
+    // Fast element accessors
+    inline float& operator()(int i, int j) { return data[i * cols + j]; }
+    inline const float& operator()(int i, int j) const { return data[i * cols + j]; }
 };

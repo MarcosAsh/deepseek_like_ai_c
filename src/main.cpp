@@ -16,6 +16,7 @@
 #include <string>
 #include <limits>
 #include <cstdint>
+#include "timer.hpp"
 
 // Checkpoint utilities: save/load model parameters
 static bool save_checkpoint(const std::string& path) {
@@ -282,7 +283,12 @@ int main(int argc, char** argv) {
                           << "x" << pos_ad->val.cols << "]\n";
 
                 auto x_ad     = add(embed_ad, pos_ad);
-                auto h_ad     = ad_transformer.forward(x_ad);
+                // Time the transformer forward pass
+                std::shared_ptr<ADTensor> h_ad;
+                {
+                    Timer t("ADTransformer forward");
+                    h_ad = ad_transformer.forward(x_ad);
+                }
                 auto logits_ad = ad_lm_head.forward(h_ad);
                 // Build target one-hot [vocab x seq_len]
                 int V = tokenizer.vocab_size();

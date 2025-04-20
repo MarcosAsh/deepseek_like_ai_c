@@ -1,4 +1,5 @@
 #include "tensor.hpp"
+#include <algorithm>  // for std::min
 
 Tensor::Tensor(int r, int c) : rows(r), cols(c), data(r * c, 0.0f) {}
 
@@ -17,14 +18,23 @@ void Tensor::print(const std::string& name) const {
 Tensor Tensor::matmul(const Tensor& other) const {
     assert(cols == other.rows);
     Tensor result(rows, other.cols);
-
-    for (int i = 0; i < rows; ++i) {
-        for (int j = 0; j < other.cols; ++j) {
-            float sum = 0.0f;
-            for (int k = 0; k < cols; ++k) {
-                sum += data[i * cols + k] * other.data[k * other.cols + j];
+    // Cache-blocked matrix multiplication for better locality
+    const int B = 32;
+    for (int ii = 0; ii < rows; ii += B) {
+        int iMax = std::min(ii + B, rows);
+        for (int kk = 0; kk < cols; kk += B) {
+            int kMax = std::min(kk + B, cols);
+            for (int jj = 0; jj < other.cols; jj += B) {
+                int jMax = std::min(jj + B, other.cols);
+                for (int i = ii; i < iMax; ++i) {
+                    for (int k = kk; k < kMax; ++k) {
+                        float a = (*this)(i, k);
+                        for (int j = jj; j < jMax; ++j) {
+                            result(i, j) += a * other(k, j);
+                        }
+                    }
+                }
             }
-            result.data[i * other.cols + j] = sum;
         }
     }
     return result;
