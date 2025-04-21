@@ -83,3 +83,24 @@ std::vector<std::string> Tokenizer::bpe_split(const std::string& word) const {
     
     return tokens;
 }
+// Decode a sequence of token IDs back to a string (space-separated tokens)
+std::string Tokenizer::decode(const std::vector<int>& tokens) const {
+    std::ostringstream oss;
+    bool first = true;
+    for (int id : tokens) {
+        if (!first) oss << ' ';
+        first = false;
+        if (id >= 0 && id < static_cast<int>(vocab.size())) {
+            oss << vocab[id];
+        } else {
+            oss << "<unk>";
+        }
+    }
+    return oss.str();
+}
+// Return the ID of a token string, or -1 if not present
+int Tokenizer::to_id(const std::string& token) const {
+    auto it = token_to_id.find(token);
+    if (it != token_to_id.end()) return it->second;
+    return -1;
+}

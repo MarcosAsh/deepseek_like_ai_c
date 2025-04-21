@@ -1,4 +1,7 @@
 #include "tensor.hpp"
+#if defined(__ARM_NEON__)
+#include <arm_neon.h>
+#endif
 #include <algorithm>  // for std::min
 
 Tensor::Tensor(int r, int c) : rows(r), cols(c), data(r * c, 0.0f) {}
@@ -18,7 +21,6 @@ void Tensor::print(const std::string& name) const {
 Tensor Tensor::matmul(const Tensor& other) const {
     assert(cols == other.rows);
     Tensor result(rows, other.cols);
-    // Cache-blocked matrix multiplication for better locality
     const int B = 32;
     for (int ii = 0; ii < rows; ii += B) {
         int iMax = std::min(ii + B, rows);
@@ -28,9 +30,23 @@ Tensor Tensor::matmul(const Tensor& other) const {
                 int jMax = std::min(jj + B, other.cols);
                 for (int i = ii; i < iMax; ++i) {
                     for (int k = kk; k < kMax; ++k) {
-                        float a = (*this)(i, k);
-                        for (int j = jj; j < jMax; ++j) {
-                            result(i, j) += a * other(k, j);
+                        const float a = (*this)(i, k);
+                        float* res_ptr = &result.data[i * other.cols + jj];
+                        const float* other_ptr = &other.data[k * other.cols + jj];
+                        int len = jMax - jj;
+                        int j = 0;
+#if defined(__ARM_NEON__)
+                        float32x4_t va = vdupq_n_f32(a);
+                        for (; j + 4 <= len; j += 4) {
+                            float32x4_t vb = vld1q_f32(other_ptr + j);
+                            float32x4_t vr = vld1q_f32(res_ptr + j);
+                            // Multiply-accumulate: vr += vb * va
+                            vr = vmlaq_f32(vr, vb, va);
+                            vst1q_f32(res_ptr + j, vr);
+                        }
+#endif
+                        for (; j < len; ++j) {
+                            res_ptr[j] += a * other_ptr[j];
                         }
                     }
                 }

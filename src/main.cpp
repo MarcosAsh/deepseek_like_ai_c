@@ -17,6 +17,11 @@
 #include <limits>
 #include <cstdint>
 #include "timer.hpp"
+// Inference modules (non-AD)
+#include "layers/embedding.hpp"
+#include "layers/positional_encoding.hpp"
+#include "transformer.hpp"
+#include "layers/linear.hpp"
 
 // Checkpoint utilities: save/load model parameters
 static bool save_checkpoint(const std::string& path) {
@@ -115,6 +120,12 @@ int main(int argc, char** argv) {
     std::string save_file = "checkpoint.bin";
     std::string valid_file;
     int patience = 2;
+    // Inference mode parameters
+    std::string generate_file;
+    int max_new_tokens = 32;
+    // Sampling strategy: top-k or top-p (nucleus) sampling; defaults to greedy if both disabled
+    int top_k = 0;
+    float top_p = 0.0f;
 
     // Parse command-line args (manual parser)
     for (int i = 1; i < argc; ++i) {
@@ -150,8 +161,25 @@ int main(int argc, char** argv) {
             valid_file = argv[++i];
         } else if (arg == "--patience" && i + 1 < argc) {
             patience = std::stoi(argv[++i]);
+        } else if (arg == "--generate" && i + 1 < argc) {
+            mode = "generate";
+            generate_file = argv[++i];
+        } else if (arg == "--cli") {
+            // Interactive CLI REPL mode
+            mode = "cli";
+        } else if (arg == "--max_new_tokens" && i + 1 < argc) {
+            max_new_tokens = std::stoi(argv[++i]);
+        } else if (arg == "--top_k" && i + 1 < argc) {
+            // Top-k sampling (greedy if 0)
+            top_k = std::stoi(argv[++i]);
+        } else if (arg == "--top_p" && i + 1 < argc) {
+            // Top-p (nucleus) sampling (greedy if 0)
+            top_p = std::stof(argv[++i]);
         } else if (arg == "--help") {
-            std::cout << "Usage: deepseek_ai --train data.txt [options]\n"
+            std::cout << "Usage: deepseek_ai [--train data.txt] [--generate prompt.txt] [options]\n"
+                      << "Modes:\n"
+                      << "  --train PATH         train model on text data\n"
+                      << "  --generate PATH      generate from prompt file (one-shot)\n"
                       << "Options:\n"
                       << "  --vocab PATH         vocabulary file (default: input_files/vocab.txt)\n"
                       << "  --embed_dim N        embedding dimension (default: 64)\n"
@@ -166,13 +194,201 @@ int main(int argc, char** argv) {
                       << "  --resume PATH        checkpoint file to load (default: none)\n"
                       << "  --save PATH          checkpoint file to save (default: checkpoint.bin)\n"
                       << "  --valid PATH         validation data file (default: none)\n"
-                      << "  --patience N         early stopping patience (default: 2 epochs)\n";
+                      << "  --patience N         early stopping patience (default: 2 epochs)\n"
+                      << "  --max_new_tokens N   maximum tokens to generate (default: 32)\n"
+                      << "  --top_k N            top-k sampling (0=greedy)\n"
+                      << "  --top_p FLOAT        top-p (nucleus) sampling (0=greedy)\n";
             return 0;
         } else {
             std::cerr << "Unknown option or missing argument: " << arg << "\n";
             return 1;
         }
     }
+    // Interactive CLI REPL mode
+    if (mode == "cli") {
+        // Load tokenizer for CLI
+        Tokenizer tokenizer(vocab_file);
+        // Build AD modules once
+        ADEmbedding ad_embed(tokenizer.vocab_size(), embed_dim);
+        ADPositionalEncoding ad_posenc(embed_dim, max_len);
+        ADTransformer ad_transformer(num_layers, embed_dim, hidden_dim, n_heads);
+        ADLinear ad_lm_head(embed_dim, (int)tokenizer.vocab_size());
+        // Load checkpoint
+        if (!resume_file.empty()) {
+            if (!load_checkpoint(resume_file)) return 1;
+            std::cout << "Loaded checkpoint from " << resume_file << "\n";
+        } else {
+            if (!load_checkpoint(save_file)) return 1;
+            std::cout << "Loaded checkpoint from " << save_file << "\n";
+        }
+        // Prepare RNG and EOS
+        std::mt19937 gen(std::random_device{}());
+        int eos_id = tokenizer.to_id("</s>");
+        // REPL loop
+        std::string line;
+        while (true) {
+            std::cout << ">> " << std::flush;
+            if (!std::getline(std::cin, line)) break;
+            if (line.empty() || line == "exit") break;
+            // Tokenize input
+            auto tokens = tokenizer.encode(line);
+            std::vector<int> output_tokens = tokens;
+            // Generate up to max_new_tokens
+            for (int step = 0; step < max_new_tokens; ++step) {
+                int context_len = std::min((int)output_tokens.size(), seq_len);
+                std::vector<int> input_ids(output_tokens.end() - context_len, output_tokens.end());
+                auto embed_ad = ad_embed.forward(input_ids);
+                auto pos_ad = ad_posenc.forward(context_len);
+                auto x_ad = add(embed_ad, pos_ad);
+                auto h_ad = ad_transformer.forward(x_ad);
+                auto logits_ad = ad_lm_head.forward(h_ad);
+                Tensor logits = logits_ad->val;
+                int V = (int)tokenizer.vocab_size();
+                int last_idx = context_len - 1;
+                std::vector<float> logit_v(V);
+                for (int i = 0; i < V; ++i) logit_v[i] = logits(i, last_idx);
+                int next_id = 0;
+                if (top_k > 0) {
+                    // top-k sampling
+                    int k = std::min(top_k, V);
+                    std::vector<int> idxs(V);
+                    std::iota(idxs.begin(), idxs.end(), 0);
+                    std::partial_sort(idxs.begin(), idxs.begin() + k, idxs.end(),
+                                      [&](int a, int b) { return logit_v[a] > logit_v[b]; });
+                    std::vector<char> mask(V, false);
+                    for (int j = 0; j < k; ++j) mask[idxs[j]] = true;
+                    std::vector<float> weights(V, 0.0f);
+                    for (int i = 0; i < V; ++i) if (mask[i]) weights[i] = std::exp(logit_v[i]);
+                    std::discrete_distribution<int> dist(weights.begin(), weights.end());
+                    next_id = dist(gen);
+                } else if (top_p > 0.0f) {
+                    // top-p sampling
+                    std::vector<float> probs(V);
+                    for (int i = 0; i < V; ++i) probs[i] = std::exp(logit_v[i]);
+                    float sum_probs = std::accumulate(probs.begin(), probs.end(), 0.0f);
+                    std::vector<int> idxs(V);
+                    std::iota(idxs.begin(), idxs.end(), 0);
+                    std::sort(idxs.begin(), idxs.end(), [&](int a, int b) { return probs[a] > probs[b]; });
+                    std::vector<char> mask(V, false);
+                    float cum = 0.0f;
+                    for (int j = 0; j < V; ++j) {
+                        int i = idxs[j]; cum += probs[i]; mask[i] = true;
+                        if (cum / sum_probs >= top_p) break;
+                    }
+                    std::vector<float> weights(V, 0.0f);
+                    for (int i = 0; i < V; ++i) if (mask[i]) weights[i] = probs[i];
+                    std::discrete_distribution<int> dist(weights.begin(), weights.end());
+                    next_id = dist(gen);
+                } else {
+                    // greedy
+                    next_id = std::max_element(logit_v.begin(), logit_v.end()) - logit_v.begin();
+                }
+                output_tokens.push_back(next_id);
+                if (eos_id >= 0 && next_id == eos_id) break;
+            }
+            // Decode and print
+            std::cout << tokenizer.decode(output_tokens) << std::endl;
+        }
+        return 0;
+    }
+    // One-shot generate mode
+    if (mode == "generate") {
+        // Load tokenizer and prompt
+        Tokenizer tokenizer(vocab_file);
+        std::string prompt;
+        if (!generate_file.empty()) {
+            std::ifstream gin(generate_file);
+            if (!gin) { std::cerr << "Cannot open prompt file: " << generate_file << "\n"; return 1; }
+            std::ostringstream gss;
+            gss << gin.rdbuf();
+            prompt = gss.str();
+        } else {
+            std::cerr << "No prompt file provided for generation\n";
+            return 1;
+        }
+        auto tokens = tokenizer.encode(prompt);
+        // Build AD modules for inference and register parameters
+        ADEmbedding ad_embed(tokenizer.vocab_size(), embed_dim);
+        ADPositionalEncoding ad_posenc(embed_dim, max_len);
+        ADTransformer ad_transformer(num_layers, embed_dim, hidden_dim, n_heads);
+        ADLinear ad_lm_head(embed_dim, (int)tokenizer.vocab_size());
+        // Load checkpoint
+        if (!resume_file.empty()) {
+            if (!load_checkpoint(resume_file)) return 1;
+            std::cout << "Loaded checkpoint from " << resume_file << "\n";
+        } else {
+            if (!load_checkpoint(save_file)) return 1;
+            std::cout << "Loaded checkpoint from " << save_file << "\n";
+        }
+        // Generate tokens (sampling or greedy)
+        // Random generator for sampling
+        std::mt19937 gen(std::random_device{}());
+        // EOS detection
+        int eos_id = tokenizer.to_id("</s>");
+        std::vector<int> output_tokens = tokens;
+        for (int step = 0; step < max_new_tokens; ++step) {
+            int context_len = std::min((int)output_tokens.size(), seq_len);
+            std::vector<int> input_ids(output_tokens.end() - context_len, output_tokens.end());
+            auto embed_ad = ad_embed.forward(input_ids);
+            auto pos_ad = ad_posenc.forward(context_len);
+            auto x_ad = add(embed_ad, pos_ad);
+            auto h_ad = ad_transformer.forward(x_ad);
+            auto logits_ad = ad_lm_head.forward(h_ad);
+            Tensor logits = logits_ad->val;  // [vocab_size x seq_len]
+            int V = (int)tokenizer.vocab_size();
+            int last_idx = context_len - 1;
+            // Extract logits for last position
+            std::vector<float> logit_v(V);
+            for (int i = 0; i < V; ++i) logit_v[i] = logits(i, last_idx);
+            int next_id = 0;
+            if (top_k > 0) {
+                // Top-k sampling
+                int k = std::min(top_k, V);
+                std::vector<int> idxs(V);
+                std::iota(idxs.begin(), idxs.end(), 0);
+                std::partial_sort(idxs.begin(), idxs.begin() + k, idxs.end(),
+                                  [&](int a, int b) { return logit_v[a] > logit_v[b]; });
+                std::vector<char> mask(V, false);
+                for (int j = 0; j < k; ++j) mask[idxs[j]] = true;
+                std::vector<float> weights(V, 0.0f);
+                for (int i = 0; i < V; ++i) if (mask[i]) weights[i] = std::exp(logit_v[i]);
+                std::discrete_distribution<int> dist(weights.begin(), weights.end());
+                next_id = dist(gen);
+            } else if (top_p > 0.0f) {
+                // Nucleus (top-p) sampling
+                std::vector<float> probs(V);
+                for (int i = 0; i < V; ++i) probs[i] = std::exp(logit_v[i]);
+                float sum_probs = std::accumulate(probs.begin(), probs.end(), 0.0f);
+                std::vector<int> idxs(V);
+                std::iota(idxs.begin(), idxs.end(), 0);
+                std::sort(idxs.begin(), idxs.end(),
+                          [&](int a, int b) { return probs[a] > probs[b]; });
+                std::vector<char> mask(V, false);
+                float cum = 0.0f;
+                for (int j = 0; j < V; ++j) {
+                    int i = idxs[j];
+                    cum += probs[i];
+                    mask[i] = true;
+                    if (cum / sum_probs >= top_p) break;
+                }
+                std::vector<float> weights(V, 0.0f);
+                for (int i = 0; i < V; ++i) if (mask[i]) weights[i] = probs[i];
+                std::discrete_distribution<int> dist(weights.begin(), weights.end());
+                next_id = dist(gen);
+            } else {
+                // Greedy sampling
+                next_id = std::max_element(logit_v.begin(), logit_v.end()) - logit_v.begin();
+            }
+            output_tokens.push_back(next_id);
+            // Stop if EOS token generated
+            if (eos_id >= 0 && next_id == eos_id) break;
+        }
+        // Decode and print generated tokens
+        std::string result = tokenizer.decode(output_tokens);
+        std::cout << result << std::endl;
+        return 0;
+    }
+    // Training mode must be explicitly set
     if (mode != "train" || data_file.empty()) {
         std::cerr << "Usage: deepseek_ai --train data.txt [--vocab vocab.txt] [--seq_len N] ...\n";
         return 1;
