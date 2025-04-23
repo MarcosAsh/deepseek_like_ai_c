@@ -2,6 +2,10 @@
 #if defined(__ARM_NEON__)
 #include <arm_neon.h>
 #endif
+#ifdef USE_ACCELERATE
+#include <Accelerate/Accelerate.h>
+#include <cblas.h>
+#endif
 #include <algorithm>  // for std::min
 
 Tensor::Tensor(int r, int c) : rows(r), cols(c), data(r * c, 0.0f) {}
@@ -21,6 +25,17 @@ void Tensor::print(const std::string& name) const {
 Tensor Tensor::matmul(const Tensor& other) const {
     assert(cols == other.rows);
     Tensor result(rows, other.cols);
+#ifdef USE_ACCELERATE
+    // Use Apple's Accelerate framework for multi-threaded SGEMM
+    cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
+                rows, other.cols, cols,
+                1.0f,
+                data.data(), cols,
+                other.data.data(), other.cols,
+                0.0f,
+                result.data.data(), other.cols);
+    return result;
+#else
     const int B = 32;
     for (int ii = 0; ii < rows; ii += B) {
         int iMax = std::min(ii + B, rows);

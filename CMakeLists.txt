@@ -29,5 +29,16 @@ add_executable(deepseek_ai src/main.cpp ${LIB_SOURCES})
 add_executable(transformer_test ${TEST_SOURCES} ${LIB_SOURCES})
 
 # Include directories
+# Include headers
 target_include_directories(deepseek_ai PRIVATE include)
 target_include_directories(transformer_test PRIVATE include)
+
+# On Apple platforms, use Accelerate framework for optimized BLAS
+if(APPLE)
+  # Enable Accelerate-based GEMM implementation
+  target_compile_definitions(deepseek_ai PRIVATE USE_ACCELERATE)
+  target_compile_definitions(transformer_test PRIVATE USE_ACCELERATE)
+  # Link against Apple's Accelerate framework for optimized BLAS/LAPACK
+  target_link_libraries(deepseek_ai PRIVATE "-framework Accelerate")
+  target_link_libraries(transformer_test PRIVATE "-framework Accelerate")
+endif()

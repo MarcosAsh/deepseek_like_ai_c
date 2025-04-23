@@ -61,15 +61,17 @@ std::vector<int> Tokenizer::encode(const std::string& text) const {
     std::vector<int> tokens;
     std::istringstream iss(text);
     std::string word;
+    const int unk_id = to_id("<unk>");
     while (iss >> word) {
-        auto bpe_tokens = bpe_split(word);
-        for (const auto& token : bpe_tokens) {
-            auto it = token_to_id.find(token);
-            if (it != token_to_id.end()) {
-                tokens.push_back(it->second);
-            } else {
-                throw std::runtime_error("Token not found in vocabulary: " + token);
+        auto pieces = bpe_split(word);
+        for (const auto& piece : pieces) {
+            int id = to_id(piece);
+            if (id >= 0) {
+                tokens.push_back(id);
+            } else if (unk_id >= 0) {
+                tokens.push_back(unk_id);
             }
+            // otherwise skip unknown piece
         }
     }
     return tokens;

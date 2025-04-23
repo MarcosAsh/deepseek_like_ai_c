@@ -36,6 +36,10 @@ void ADTensor::backward() {
             dep.second();
         }
     }
+    // Clear dependencies to release the computation graph and free memory
+    for (ADTensor* node : topo) {
+        node->deps.clear();
+    }
 }
 
 std::shared_ptr<ADTensor> make_ad(const Tensor& t) {
