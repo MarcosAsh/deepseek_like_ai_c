@@ -9,6 +9,11 @@ ADMultiHeadAttention::ADMultiHeadAttention(int embed_dim_, int num_heads_)
         throw std::invalid_argument("embed_dim must be divisible by num_heads");
     }
     head_dim = embed_dim / num_heads;
+    // Compute ALiBi slopes for each head: slope[h] = 2^{-h/(num_heads-1)}
+    alibi_slopes.resize(num_heads);
+    for (int h = 0; h < num_heads; ++h) {
+        alibi_slopes[h] = std::pow(2.0f, -static_cast<float>(h) / (static_cast<float>(num_heads) - 1.0f));
+    }
     // Initialize weight matrices
     Tensor tWq(embed_dim, embed_dim), tWk(embed_dim, embed_dim),
            tWv(embed_dim, embed_dim), tWo(embed_dim, embed_dim);
@@ -45,6 +50,18 @@ std::shared_ptr<ADTensor> ADMultiHeadAttention::forward(
         // Scale
         float scale = 1.0f / std::sqrt((float)head_dim);
         auto scores_scaled = scalar_mul(scores, scale);
+        // Apply ALiBi linear bias to scores
+        {
+            // Build bias matrix [seq_len x seq_len]
+            Tensor bias_t(seq_len, seq_len);
+            for (int i = 0; i < seq_len; ++i) {
+                for (int j = 0; j < seq_len; ++j) {
+                    bias_t.data[i * seq_len + j] = -std::abs(j - i) * alibi_slopes[h];
+                }
+            }
+            auto bias_ad = make_ad(bias_t);
+            scores_scaled = add(scores_scaled, bias_ad);
+        }
         // Softmax
         auto scores_exp = exp_ad(scores_scaled);
         // Sum across keys per query

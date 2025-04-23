@@ -9,6 +9,8 @@ public:
     // tokens: sequence of token IDs (length seq_len)
     // returns: [embed_dim x seq_len]
     std::shared_ptr<ADTensor> forward(const std::vector<int>& tokens) const;
+    // Expose the embedding weight tensor for weight tying
+    const std::shared_ptr<ADTensor>& get_weights() const { return weights; }
 
 private:
     int vocab_size;

@@ -2,10 +2,14 @@
 #include <algorithm>
 #include <sstream>
 #include <stdexcept>
+#include <climits>
 
-Tokenizer::Tokenizer(const std::string& vocab_file) {
+Tokenizer::Tokenizer(const std::string& vocab_file, const std::string& bpe_codes_file) {
     load_vocab(vocab_file);
-} 
+    if (!bpe_codes_file.empty()) {
+        load_bpe_codes(bpe_codes_file);
+    }
+}
 
 void Tokenizer::load_vocab(const std::string& vocab_file) {
     std::ifstream file(vocab_file);
@@ -37,6 +41,22 @@ void Tokenizer::load_vocab(const std::string& vocab_file) {
     }
 }
 
+void Tokenizer::load_bpe_codes(const std::string& codes_file) {
+    std::ifstream in(codes_file);
+    if (!in) {
+        throw std::runtime_error("Could not open BPE codes file: " + codes_file);
+    }
+    std::string line;
+    int rank = 0;
+    while (std::getline(in, line)) {
+        if (line.empty()) continue;
+        std::istringstream iss(line);
+        std::string a, b;
+        if (!(iss >> a >> b)) continue;
+        bpe_ranks[{a, b}] = rank++;
+    }
+}
+
 std::vector<int> Tokenizer::encode(const std::string& text) const {
     std::vector<int> tokens;
     std::istringstream iss(text);
@@ -56,32 +76,45 @@ std::vector<int> Tokenizer::encode(const std::string& text) const {
 }   
 
 std::vector<std::string> Tokenizer::bpe_split(const std::string& word) const {
-    // Simplified BPE - in reality you'd need the merge rules
-    std::vector<std::string> tokens;
-    size_t start = 0;
-    
-    while (start < word.size()) {
-        size_t end = word.size();
-        std::string subword;
-        
-        // Find longest matching subword
-        while (end > start) {
-            subword = word.substr(start, end - start);
-            if (token_to_id.count(subword)) {
-                tokens.push_back(subword);
-                start = end;
-                break;
+    if (bpe_ranks.empty()) {
+        // fallback: treat whole word as single token
+        return {word};
+    }
+    // Initialize symbols as characters + end-of-word marker
+    std::vector<std::string> symbols;
+    for (char c : word) {
+        symbols.emplace_back(1, c);
+    }
+    if (!symbols.empty()) {
+        symbols.back() += "</w>";
+    }
+    // BPE merge loop
+    while (true) {
+        int best_rank = INT_MAX;
+        int best_i = -1;
+        for (int i = 0; i + 1 < (int)symbols.size(); ++i) {
+            auto pr = std::make_pair(symbols[i], symbols[i+1]);
+            auto it = bpe_ranks.find(pr);
+            if (it != bpe_ranks.end() && it->second < best_rank) {
+                best_rank = it->second;
+                best_i = i;
             }
-            end--;
         }
-        
-        if (end == start) { // No match found
-            tokens.push_back("<unk>");
-            start++;
+        if (best_i < 0) break;
+        // merge symbols[best_i] and symbols[best_i+1]
+        symbols[best_i] = symbols[best_i] + symbols[best_i+1];
+        symbols.erase(symbols.begin() + best_i + 1);
+    }
+    // remove end-of-word marker
+    if (!symbols.empty()) {
+        std::string &last = symbols.back();
+        const std::string marker = "</w>";
+        if (last.size() >= marker.size() &&
+            last.compare(last.size() - marker.size(), marker.size(), marker) == 0) {
+            last.erase(last.size() - marker.size());
         }
     }
-    
-    return tokens;
+    return symbols;
 }
 // Decode a sequence of token IDs back to a string (space-separated tokens)
 std::string Tokenizer::decode(const std::vector<int>& tokens) const {

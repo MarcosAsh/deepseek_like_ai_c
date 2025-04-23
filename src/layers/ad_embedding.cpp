@@ -1,14 +1,15 @@
 #include "layers/ad_embedding.hpp"
 #include <random>
 #include <stdexcept>
+#include <cmath>
 
 ADEmbedding::ADEmbedding(int vocab_size_, int embed_dim_)
     : vocab_size(vocab_size_), embed_dim(embed_dim_) {
     Tensor tW(embed_dim, vocab_size);
-    // random init
+    // Xavier uniform initialization: U[-r, r] with r = sqrt(6/(vocab_size + embed_dim))
     std::mt19937 gen(std::random_device{}());
-    float range = 0.1f;
-    std::uniform_real_distribution<float> dist(-range, range);
+    float r = std::sqrt(6.0f / (vocab_size + embed_dim));
+    std::uniform_real_distribution<float> dist(-r, r);
     for (auto &v : tW.data) v = dist(gen);
     weights = make_ad(tW);
     register_parameter(weights);

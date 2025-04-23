@@ -46,19 +46,23 @@ static bool load_checkpoint(const std::string& path) {
     uint32_t num = 0;
     in.read(reinterpret_cast<char*>(&num), sizeof(num));
     if (num != params.size()) {
-        std::cerr << "Error: checkpoint parameter count mismatch (" << num << " vs " << params.size() << ")\n";
-        return false;
+        std::cerr << "Warning: checkpoint parameter count mismatch (" << num << " vs " << params.size() << "), attempting partial load\n";
     }
-    for (auto& p : params) {
+    // Load available parameters
+    uint32_t to_load = std::min<uint32_t>(num, (uint32_t)params.size());
+    for (uint32_t i = 0; i < to_load; ++i) {
+        auto& p = params[i];
         uint32_t r = 0, c = 0;
         in.read(reinterpret_cast<char*>(&r), sizeof(r));
         in.read(reinterpret_cast<char*>(&c), sizeof(c));
         if (r != (uint32_t)p->val.rows || c != (uint32_t)p->val.cols) {
-            std::cerr << "Error: checkpoint param shape mismatch (" << r << "x" << c
-                      << " vs " << p->val.rows << "x" << p->val.cols << ")\n";
-            return false;
+            std::cerr << "Warning: checkpoint param shape mismatch (" << r << "x" << c
+                      << " vs " << p->val.rows << "x" << p->val.cols << "), skipping\n";
+            // skip data
+            in.seekg((std::streamoff)r * c * sizeof(float), std::ios::cur);
+        } else {
+            in.read(reinterpret_cast<char*>(p->val.data.data()), r * c * sizeof(float));
         }
-        in.read(reinterpret_cast<char*>(p->val.data.data()), r * c * sizeof(float));
     }
     return true;
 }
@@ -107,6 +111,7 @@ int main(int argc, char** argv) {
     std::string mode;
     std::string data_file;
     std::string vocab_file = "input_files/vocab.txt";
+    std::string bpe_codes_file;
     int embed_dim = 64;
     int hidden_dim = 64;
     int n_heads = 4;
@@ -175,6 +180,9 @@ int main(int argc, char** argv) {
         } else if (arg == "--top_p" && i + 1 < argc) {
             // Top-p (nucleus) sampling (greedy if 0)
             top_p = std::stof(argv[++i]);
+        } else if (arg == "--bpe-codes" && i + 1 < argc) {
+            // Path to BPE merge rules file
+            bpe_codes_file = argv[++i];
         } else if (arg == "--help") {
             std::cout << "Usage: deepseek_ai [--train data.txt] [--generate prompt.txt] [options]\n"
                       << "Modes:\n"
@@ -195,6 +203,7 @@ int main(int argc, char** argv) {
                       << "  --save PATH          checkpoint file to save (default: checkpoint.bin)\n"
                       << "  --valid PATH         validation data file (default: none)\n"
                       << "  --patience N         early stopping patience (default: 2 epochs)\n"
+                      << "  --bpe-codes PATH     BPE merges file for true BPE (optional)\n"
                       << "  --max_new_tokens N   maximum tokens to generate (default: 32)\n"
                       << "  --top_k N            top-k sampling (0=greedy)\n"
                       << "  --top_p FLOAT        top-p (nucleus) sampling (0=greedy)\n";
@@ -207,12 +216,18 @@ int main(int argc, char** argv) {
     // Interactive CLI REPL mode
     if (mode == "cli") {
         // Load tokenizer for CLI
-        Tokenizer tokenizer(vocab_file);
+        Tokenizer tokenizer(vocab_file, bpe_codes_file);
         // Build AD modules once
         ADEmbedding ad_embed(tokenizer.vocab_size(), embed_dim);
         ADPositionalEncoding ad_posenc(embed_dim, max_len);
         ADTransformer ad_transformer(num_layers, embed_dim, hidden_dim, n_heads);
-        ADLinear ad_lm_head(embed_dim, (int)tokenizer.vocab_size());
+        // Tied Embedding-LM head: share embedding weights
+        auto W_embed = ad_embed.get_weights(); // [embed_dim x vocab_size]
+        // Bias for LM head
+        Tensor tb_lm((int)tokenizer.vocab_size(), 1);
+        tb_lm.data.assign(tokenizer.vocab_size(), 0.0f);
+        auto b_lm = make_ad(tb_lm);
+        register_parameter(b_lm);
         // Load checkpoint
         if (!resume_file.empty()) {
             if (!load_checkpoint(resume_file)) return 1;
@@ -241,7 +256,15 @@ int main(int argc, char** argv) {
                 auto pos_ad = ad_posenc.forward(context_len);
                 auto x_ad = add(embed_ad, pos_ad);
                 auto h_ad = ad_transformer.forward(x_ad);
-                auto logits_ad = ad_lm_head.forward(h_ad);
+                // Compute logits via tied embedding weights: logits = W_embed^T * h_ad + b_lm
+                auto Wt = transpose(W_embed);  // [vocab_size x embed_dim]
+                auto logits_ad = matmul(Wt, h_ad);  // [vocab_size x seq_len]
+                // Broadcast bias using existing context_len
+                Tensor ones_bias_t(1, context_len);
+                ones_bias_t.data.assign(context_len, 1.0f);
+                auto ones_bias = make_ad(ones_bias_t);
+                auto b_mat = matmul(b_lm, ones_bias);  // [vocab_size x seq_len]
+                logits_ad = add(logits_ad, b_mat);
                 Tensor logits = logits_ad->val;
                 int V = (int)tokenizer.vocab_size();
                 int last_idx = context_len - 1;
@@ -294,7 +317,7 @@ int main(int argc, char** argv) {
     // One-shot generate mode
     if (mode == "generate") {
         // Load tokenizer and prompt
-        Tokenizer tokenizer(vocab_file);
+        Tokenizer tokenizer(vocab_file, bpe_codes_file);
         std::string prompt;
         if (!generate_file.empty()) {
             std::ifstream gin(generate_file);
@@ -311,7 +334,13 @@ int main(int argc, char** argv) {
         ADEmbedding ad_embed(tokenizer.vocab_size(), embed_dim);
         ADPositionalEncoding ad_posenc(embed_dim, max_len);
         ADTransformer ad_transformer(num_layers, embed_dim, hidden_dim, n_heads);
-        ADLinear ad_lm_head(embed_dim, (int)tokenizer.vocab_size());
+        // Tied Embedding-LM head: share embedding weights
+        auto W_embed = ad_embed.get_weights(); // [embed_dim x vocab_size]
+        // Bias for LM head
+        Tensor tb_lm((int)tokenizer.vocab_size(), 1);
+        tb_lm.data.assign(tokenizer.vocab_size(), 0.0f);
+        auto b_lm = make_ad(tb_lm);
+        register_parameter(b_lm);
         // Load checkpoint
         if (!resume_file.empty()) {
             if (!load_checkpoint(resume_file)) return 1;
@@ -333,7 +362,15 @@ int main(int argc, char** argv) {
             auto pos_ad = ad_posenc.forward(context_len);
             auto x_ad = add(embed_ad, pos_ad);
             auto h_ad = ad_transformer.forward(x_ad);
-            auto logits_ad = ad_lm_head.forward(h_ad);
+            // Compute logits via tied embedding weights
+            auto Wt = transpose(W_embed);  // [vocab_size x embed_dim]
+            auto logits_ad = matmul(Wt, h_ad);  // [vocab_size x seq_len]
+            // Broadcast bias using existing context_len
+            Tensor ones_bias_t(1, context_len);
+            ones_bias_t.data.assign(context_len, 1.0f);
+            auto ones_bias = make_ad(ones_bias_t);
+            auto b_mat = matmul(b_lm, ones_bias);  // [vocab_size x seq_len]
+            logits_ad = add(logits_ad, b_mat);
             Tensor logits = logits_ad->val;  // [vocab_size x seq_len]
             int V = (int)tokenizer.vocab_size();
             int last_idx = context_len - 1;
@@ -405,7 +442,7 @@ int main(int argc, char** argv) {
               << "Early stopping patience: " << patience << "\n";
 
     // Load tokenizer and dataset
-    Tokenizer tokenizer(vocab_file);
+    Tokenizer tokenizer(vocab_file, bpe_codes_file);
     std::ifstream in(data_file);
     if (!in) {
         std::cerr << "Cannot open data file: " << data_file << "\n";
@@ -447,7 +484,14 @@ int main(int argc, char** argv) {
     ADEmbedding ad_embed(tokenizer.vocab_size(), embed_dim);
     ADPositionalEncoding ad_posenc(embed_dim, max_len);
     ADTransformer ad_transformer(num_layers, embed_dim, hidden_dim, n_heads);
-    ADLinear ad_lm_head(embed_dim, (int)tokenizer.vocab_size());
+    // Tied Embedding-LM head weights
+    auto W_embed = ad_embed.get_weights(); // [embed_dim x vocab_size]
+    // Bias for LM head
+    int Vocab = (int)tokenizer.vocab_size();
+    Tensor tb_lm(Vocab, 1);
+    tb_lm.data.assign(Vocab, 0.0f);
+    auto b_lm = make_ad(tb_lm);
+    register_parameter(b_lm);
     // Optimizer: AdamW with default betas, eps, weight_decay=0.01, clip_norm=1.0
     AdamW optimizer(lr);
     // Load checkpoint if requested
@@ -505,7 +549,15 @@ int main(int argc, char** argv) {
                     Timer t("ADTransformer forward");
                     h_ad = ad_transformer.forward(x_ad);
                 }
-                auto logits_ad = ad_lm_head.forward(h_ad);
+                // Compute logits via tied embedding weights
+                auto Wt = transpose(W_embed);  // [vocab_size x embed_dim]
+                auto logits_ad = matmul(Wt, h_ad);  // [vocab_size x seq_len]
+                // Broadcast bias using fixed seq_len
+                Tensor ones_bias_t(1, seq_len);
+                ones_bias_t.data.assign(seq_len, 1.0f);
+                auto ones_bias = make_ad(ones_bias_t);
+                auto b_mat = matmul(b_lm, ones_bias);  // [vocab_size x seq_len]
+                logits_ad = add(logits_ad, b_mat);
                 // Build target one-hot [vocab x seq_len]
                 int V = tokenizer.vocab_size();
                 Tensor target_tensor(V, seq_len);
@@ -566,7 +618,15 @@ int main(int argc, char** argv) {
                 auto pos_v   = ad_posenc.forward(seq_len);
                 auto x_v     = add(embed_v, pos_v);
                 auto h_v     = ad_transformer.forward(x_v);
-                auto logits_v= ad_lm_head.forward(h_v);
+                // Compute validation logits via tied embedding weights
+                auto Wt_v = transpose(W_embed);  // [vocab_size x embed_dim]
+                auto logits_v = matmul(Wt_v, h_v);  // [vocab_size x seq_len]
+                // Broadcast bias
+                Tensor ones_row_v_t(1, seq_len);
+                ones_row_v_t.data.assign(seq_len, 1.0f);
+                auto ones_row_v = make_ad(ones_row_v_t);
+                auto b_mat_v = matmul(b_lm, ones_row_v);  // [vocab_size x seq_len]
+                logits_v = add(logits_v, b_mat_v);
                 // Compute cross-entropy per time step
                 int V = tokenizer.vocab_size();
                 std::vector<float> temp_grad(V);
