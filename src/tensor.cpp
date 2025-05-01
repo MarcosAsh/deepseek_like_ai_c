@@ -69,6 +69,7 @@ Tensor Tensor::matmul(const Tensor& other) const {
         }
     }
     return result;
+#endif  // USE_ACCELERATE
 }
 
 float Tensor::dot(const Tensor& other) const {

@@ -4,10 +4,12 @@
 #include <algorithm>
 #include <random>
 #include <stdexcept>
+#include <limits>  // for std::numeric_limits
 
-MultiHeadAttention::MultiHeadAttention(int embed_dim_, int num_heads_)
+MultiHeadAttention::MultiHeadAttention(int embed_dim_, int num_heads_, bool causal_)
     : embed_dim(embed_dim_), num_heads(num_heads_),
-      head_dim( (embed_dim_ % num_heads_ == 0) ? (embed_dim_ / num_heads_) : 0 ),
+      head_dim((embed_dim_ % num_heads_ == 0) ? (embed_dim_ / num_heads_) : 0),
+      causal(causal_),
       W_q(embed_dim_, embed_dim_),
       W_k(embed_dim_, embed_dim_),
       W_v(embed_dim_, embed_dim_),
@@ -50,7 +52,13 @@ Tensor MultiHeadAttention::forward(const Tensor& input) const {
                     float k = K.data[(offset + d) * seq_len + j];
                     sum += q * k;
                 }
-                score_mat[i * seq_len + j] = sum / std::sqrt((float)head_dim);
+                // scale score
+                float scaled = sum / std::sqrt((float)head_dim);
+                // apply causal mask if enabled: prevent attending to future positions
+                if (causal && j > i) {
+                    scaled = -std::numeric_limits<float>::infinity();
+                }
+                score_mat[i * seq_len + j] = scaled;
             }
             // Softmax over j for each i
             float max_score = score_mat[i * seq_len + 0];
