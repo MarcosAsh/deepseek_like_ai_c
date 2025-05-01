@@ -18,8 +18,9 @@ set(CMAKE_EXE_LINKER_FLAGS_RELEASE "${CMAKE_EXE_LINKER_FLAGS_RELEASE} -flto")
 file(GLOB_RECURSE ALL_SRC "src/*.cpp")
 file(GLOB_RECURSE TEST_SOURCES "test/*.cpp")
 
-# Separate library sources (exclude main.cpp)
+# Separate library sources (exclude main.cpp and train_bpe.cpp)
 list(FILTER ALL_SRC EXCLUDE REGEX "src/main\\.cpp$")
+list(FILTER ALL_SRC EXCLUDE REGEX "src/train_bpe\\.cpp$")
 set(LIB_SOURCES ${ALL_SRC})
 
 # Main executable (includes main.cpp)
@@ -32,6 +33,10 @@ add_executable(transformer_test ${TEST_SOURCES} ${LIB_SOURCES})
 # Include headers
 target_include_directories(deepseek_ai PRIVATE include)
 target_include_directories(transformer_test PRIVATE include)
+  
+# BPE training tool
+add_executable(train_bpe src/train_bpe.cpp)
+target_include_directories(train_bpe PRIVATE include)
 
 # On Apple platforms, use Accelerate framework for optimized BLAS
 if(APPLE)
