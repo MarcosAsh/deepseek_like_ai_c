@@ -69,6 +69,7 @@ Tensor Tensor::matmul(const Tensor& other) const {
         }
     }
     return result;
+#endif  // USE_ACCELERATE
 }
 #endif // USE_ACCELERATE accelerated path
 

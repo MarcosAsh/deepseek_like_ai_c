@@ -4,10 +4,12 @@
 #include <algorithm>
 #include <random>
 #include <stdexcept>
+#include <limits>  // for std::numeric_limits
 
-MultiHeadAttention::MultiHeadAttention(int embed_dim_, int num_heads_)
+MultiHeadAttention::MultiHeadAttention(int embed_dim_, int num_heads_, bool causal_, float dropout_prob_)
     : embed_dim(embed_dim_), num_heads(num_heads_),
-      head_dim( (embed_dim_ % num_heads_ == 0) ? (embed_dim_ / num_heads_) : 0 ),
+      head_dim((embed_dim_ % num_heads_ == 0) ? (embed_dim_ / num_heads_) : 0),
+      causal(causal_), dropout_prob(dropout_prob_),
       W_q(embed_dim_, embed_dim_),
       W_k(embed_dim_, embed_dim_),
       W_v(embed_dim_, embed_dim_),
@@ -29,6 +31,10 @@ MultiHeadAttention::MultiHeadAttention(int embed_dim_, int num_heads_)
 
 Tensor MultiHeadAttention::forward(const Tensor& input) const {
     int seq_len = input.cols;
+    // prepare RNG for dropout on attention weights
+    static thread_local std::mt19937 _rng(std::random_device{}());
+    float _keep_prob = 1.0f - dropout_prob;
+    std::bernoulli_distribution _dist(_keep_prob);
     // Linear projections
     Tensor Q = W_q.matmul(input); // [embed_dim x seq_len]
     Tensor K = W_k.matmul(input);
@@ -50,7 +56,13 @@ Tensor MultiHeadAttention::forward(const Tensor& input) const {
                     float k = K.data[(offset + d) * seq_len + j];
                     sum += q * k;
                 }
-                score_mat[i * seq_len + j] = sum / std::sqrt((float)head_dim);
+                // scale score
+                float scaled = sum / std::sqrt((float)head_dim);
+                // apply causal mask if enabled: prevent attending to future positions
+                if (causal && j > i) {
+                    scaled = -std::numeric_limits<float>::infinity();
+                }
+                score_mat[i * seq_len + j] = scaled;
             }
             // Softmax over j for each i
             float max_score = score_mat[i * seq_len + 0];
@@ -65,6 +77,14 @@ Tensor MultiHeadAttention::forward(const Tensor& input) const {
             }
             for (int j = 0; j < seq_len; ++j) {
                 attn_weights[i * seq_len + j] /= sum_exp;
+            }
+            // Apply dropout to attention weights if enabled
+            if (dropout_prob > 0.0f) {
+                for (int j = 0; j < seq_len; ++j) {
+                    bool keep = _dist(_rng);
+                    float& w = attn_weights[i * seq_len + j];
+                    w = keep ? (w / _keep_prob) : 0.0f;
+                }
             }
         }
         // Compute head output [head_dim x seq_len]
