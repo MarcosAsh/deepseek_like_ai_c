@@ -1,12 +1,14 @@
 #pragma once
 #include <vector>
+#include "allocator.hpp"
 #include <cassert>
 #include <cmath>
 #include <iostream>
 
 class Tensor {
 public:
-    std::vector<float> data;
+    // Tensor data stored via unified memory allocator (on-chip pool or host fallback)
+    std::vector<float, UnifiedMemoryAllocator<float>> data;
     int rows, cols;
 
     Tensor(int r, int c);

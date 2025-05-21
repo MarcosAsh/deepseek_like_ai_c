@@ -17,6 +17,8 @@
 #include <limits>
 #include <cstdint>
 #include "timer.hpp"
+// Unified memory pool manager
+#include "memory_pool.hpp"
 // Inference modules (non-AD)
 #include "layers/embedding.hpp"
 #include "layers/positional_encoding.hpp"
@@ -125,6 +127,8 @@ int main(int argc, char** argv) {
     std::string save_file = "checkpoint.bin";
     std::string valid_file;
     int patience = 2;
+    // On-chip unified memory pool size (MB, 0 to disable)
+    long pool_size_mb = 0;
     // Inference mode parameters
     std::string generate_file;
     int max_new_tokens = 32;
@@ -183,6 +187,9 @@ int main(int argc, char** argv) {
         } else if (arg == "--bpe-codes" && i + 1 < argc) {
             // Path to BPE merge rules file
             bpe_codes_file = argv[++i];
+        } else if (arg == "--pool_size_mb" && i + 1 < argc) {
+            // On-chip unified memory pool size in megabytes
+            pool_size_mb = std::stol(argv[++i]);
         } else if (arg == "--help") {
             std::cout << "Usage: deepseek_ai [--train data.txt] [--generate prompt.txt] [options]\n"
                       << "Modes:\n"
@@ -212,6 +219,12 @@ int main(int argc, char** argv) {
             std::cerr << "Unknown option or missing argument: " << arg << "\n";
             return 1;
         }
+    }
+
+    // Initialize unified memory pool if requested
+    if (pool_size_mb > 0) {
+        UnifiedMemoryManager::instance().init(pool_size_mb * 1024 * 1024);
+        std::cout << "Initialized on-chip memory pool of size " << pool_size_mb << " MB\n";
     }
     // Interactive CLI REPL mode
     if (mode == "cli") {
