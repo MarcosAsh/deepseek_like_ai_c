@@ -1,5 +1,6 @@
 #include "optimizer.hpp"
 #include <cmath>
+#include "quantization.hpp"
 
 SGD::SGD(float lr_) : lr(lr_) {}
 
@@ -10,6 +11,13 @@ void SGD::step() {
         Tensor& grad = p->grad;
         for (size_t i = 0, n = val.data.size(); i < n; ++i) {
             val.data[i] -= lr * grad.data[i];
+        }
+    }
+    // Apply fake quantization after weight update if QAT enabled
+    if (quant::g_qat_enabled) {
+        auto& params = get_parameters();
+        for (auto& p : params) {
+            quant::fake_quantize_inplace(p->val);
         }
     }
 }
@@ -73,6 +81,13 @@ void AdamW::step() {
             double update = m_hat / (std::sqrt(v_hat) + eps);
             update += weight_decay * val.data[j];
             val.data[j] = (float)(val.data[j] - lr * update);
+        }
+    }
+    // Apply fake quantization after weight update if QAT enabled
+    if (quant::g_qat_enabled) {
+        auto& params = get_parameters();
+        for (auto& p : params) {
+            quant::fake_quantize_inplace(p->val);
         }
     }
 }

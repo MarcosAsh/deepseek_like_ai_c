@@ -18,7 +18,9 @@
 #include <cstdint>
 #include "timer.hpp"
 // Unified memory pool manager
+// Unified memory pool manager
 #include "memory_pool.hpp"
+#include "quantization.hpp"
 // Inference modules (non-AD)
 #include "layers/embedding.hpp"
 #include "layers/positional_encoding.hpp"
@@ -129,6 +131,10 @@ int main(int argc, char** argv) {
     int patience = 2;
     // On-chip unified memory pool size (MB, 0 to disable)
     long pool_size_mb = 0;
+    // Quantization parameters
+    bool qat_enabled = false;
+    int qat_bits = 8;
+    std::string ptq_out;
     // Inference mode parameters
     std::string generate_file;
     int max_new_tokens = 32;
@@ -187,6 +193,15 @@ int main(int argc, char** argv) {
         } else if (arg == "--bpe-codes" && i + 1 < argc) {
             // Path to BPE merge rules file
             bpe_codes_file = argv[++i];
+        } else if (arg == "--qat") {
+            // Enable quantization-aware training
+            qat_enabled = true;
+        } else if (arg == "--qat-bits" && i + 1 < argc) {
+            // Number of bits for quantization (default 8)
+            qat_bits = std::stoi(argv[++i]);
+        } else if (arg == "--ptq-out" && i + 1 < argc) {
+            // Path to dump post-training quantized model
+            ptq_out = argv[++i];
         } else if (arg == "--pool_size_mb" && i + 1 < argc) {
             // On-chip unified memory pool size in megabytes
             pool_size_mb = std::stol(argv[++i]);
@@ -213,7 +228,10 @@ int main(int argc, char** argv) {
                       << "  --bpe-codes PATH     BPE merges file for true BPE (optional)\n"
                       << "  --max_new_tokens N   maximum tokens to generate (default: 32)\n"
                       << "  --top_k N            top-k sampling (0=greedy)\n"
-                      << "  --top_p FLOAT        top-p (nucleus) sampling (0=greedy)\n";
+                      << "  --top_p FLOAT        top-p (nucleus) sampling (0=greedy)\n"
+                      << "  --qat                enable quantization-aware training (fake quant)\n"
+                      << "  --qat-bits N         bits for quantization (default: 8)\n"
+                      << "  --ptq-out PATH       output path for post-training quantized model\n";
             return 0;
         } else {
             std::cerr << "Unknown option or missing argument: " << arg << "\n";
@@ -221,6 +239,12 @@ int main(int argc, char** argv) {
         }
     }
 
+    // Initialize quantization settings
+    quant::g_qat_enabled = qat_enabled;
+    quant::g_qat_bits = qat_bits;
+    if (quant::g_qat_enabled) {
+        std::cout << "Quantization-aware training enabled (" << qat_bits << " bits)\n";
+    }
     // Initialize unified memory pool if requested
     if (pool_size_mb > 0) {
         UnifiedMemoryManager::instance().init(pool_size_mb * 1024 * 1024);
@@ -674,5 +698,29 @@ int main(int argc, char** argv) {
         }
     }
     std::cout << "Training complete.\n";
+    // If requested, dump post-training quantized model
+    if (!ptq_out.empty()) {
+        std::ofstream oq(ptq_out, std::ios::binary);
+        if (!oq) {
+            std::cerr << "Error: cannot open PTQ output file: " << ptq_out << "\n";
+            return 1;
+        }
+        auto& params = get_parameters();
+        uint32_t num = (uint32_t)params.size();
+        oq.write(reinterpret_cast<const char*>(&num), sizeof(num));
+        for (auto& p : params) {
+            uint32_t r = (uint32_t)p->val.rows;
+            uint32_t c = (uint32_t)p->val.cols;
+            float scale = 1.0f;
+            std::vector<uint8_t> qdata;
+            quant::post_training_quantize(p->val, qdata, scale);
+            oq.write(reinterpret_cast<const char*>(&r), sizeof(r));
+            oq.write(reinterpret_cast<const char*>(&c), sizeof(c));
+            oq.write(reinterpret_cast<const char*>(&scale), sizeof(scale));
+            oq.write(reinterpret_cast<const char*>(qdata.data()), qdata.size());
+        }
+        std::cout << "Wrote post-training quantized model to " << ptq_out << "\n";
+        return 0;
+    }
     return 0;
 }

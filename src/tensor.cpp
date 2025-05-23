@@ -4,7 +4,7 @@
 #endif
 #ifdef USE_ACCELERATE
 #include <Accelerate/Accelerate.h>
-#include <cblas.h>
+// cblas.h is included by Accelerate, no need to include separately on Apple
 #endif
 #include <algorithm>  // for std::min
 
@@ -71,7 +71,6 @@ Tensor Tensor::matmul(const Tensor& other) const {
     return result;
 #endif  // USE_ACCELERATE
 }
-#endif // USE_ACCELERATE accelerated path
 
 float Tensor::dot(const Tensor& other) const {
     assert(data.size() == other.data.size());
