@@ -63,6 +63,15 @@ if(APPLE)
 endif()
 add_test(NAME autodiff_test COMMAND autodiff_test)
 
+# Unit tests for individual layers (Embedding, PositionalEncoding, Linear)
+add_executable(layers_test test/layers_test.cpp ${LIB_SOURCES})
+target_include_directories(layers_test PRIVATE include)
+if(APPLE)
+  target_compile_definitions(layers_test PRIVATE USE_ACCELERATE)
+  target_link_libraries(layers_test PRIVATE "-framework Accelerate")
+endif()
+add_test(NAME layers_test COMMAND layers_test)
+
 # Unit test for softmax_cross_entropy loss
 add_executable(loss_test test/loss_test.cpp ${LIB_SOURCES})
 target_include_directories(loss_test PRIVATE include)
