@@ -44,6 +44,33 @@ if(APPLE)
   target_link_libraries(tensor_test PRIVATE "-framework Accelerate")
 endif()
 add_test(NAME tensor_test COMMAND tensor_test)
+
+# Unit test for Tokenizer
+add_executable(tokenizer_test test/tokenizer_test.cpp ${LIB_SOURCES})
+target_include_directories(tokenizer_test PRIVATE include)
+if(APPLE)
+  target_compile_definitions(tokenizer_test PRIVATE USE_ACCELERATE)
+  target_link_libraries(tokenizer_test PRIVATE "-framework Accelerate")
+endif()
+add_test(NAME tokenizer_test COMMAND tokenizer_test)
+
+# Unit test for Autodiff operations
+add_executable(autodiff_test test/autodiff_test.cpp ${LIB_SOURCES})
+target_include_directories(autodiff_test PRIVATE include)
+if(APPLE)
+  target_compile_definitions(autodiff_test PRIVATE USE_ACCELERATE)
+  target_link_libraries(autodiff_test PRIVATE "-framework Accelerate")
+endif()
+add_test(NAME autodiff_test COMMAND autodiff_test)
+
+# Unit test for softmax_cross_entropy loss
+add_executable(loss_test test/loss_test.cpp ${LIB_SOURCES})
+target_include_directories(loss_test PRIVATE include)
+if(APPLE)
+  target_compile_definitions(loss_test PRIVATE USE_ACCELERATE)
+  target_link_libraries(loss_test PRIVATE "-framework Accelerate")
+endif()
+add_test(NAME loss_test COMMAND loss_test)
   
 # BPE training tool
 add_executable(train_bpe src/train_bpe.cpp)

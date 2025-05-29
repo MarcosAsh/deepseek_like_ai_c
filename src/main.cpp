@@ -21,6 +21,7 @@
 // Unified memory pool manager
 #include "memory_pool.hpp"
 #include "quantization.hpp"
+#include "loss.hpp"
 // Inference modules (non-AD)
 #include "layers/embedding.hpp"
 #include "layers/positional_encoding.hpp"
@@ -71,26 +72,6 @@ static bool load_checkpoint(const std::string& path) {
     return true;
 }
 
-// Utility: softmax + cross-entropy loss and gradient
-static float softmax_cross_entropy(const std::vector<float>& logits,
-                                   int target, std::vector<float>& grad) {
-    int V = logits.size();
-    // compute max for numeric stability
-    float max_logit = *std::max_element(logits.begin(), logits.end());
-    std::vector<float> exps(V);
-    float sum_exp = 0.0f;
-    for (int i = 0; i < V; ++i) {
-        exps[i] = std::exp(logits[i] - max_logit);
-        sum_exp += exps[i];
-    }
-    float loss = -std::log(exps[target] / sum_exp);
-    // gradient dL/dz = p - y
-    for (int i = 0; i < V; ++i) {
-        float p = exps[i] / sum_exp;
-        grad[i] = p - (i == target ? 1.0f : 0.0f);
-    }
-    return loss;
-}
 // Simple ASCII sparkline for loss visualization
 static std::string sparkline(const std::vector<float>& data) {
     if (data.empty()) return std::string();
