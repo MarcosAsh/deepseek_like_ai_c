@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.10)
 project(DeepSeek_AI)
+enable_testing()
 
 set(CMAKE_CXX_STANDARD 17)
 
@@ -27,12 +28,22 @@ set(LIB_SOURCES ${ALL_SRC})
 add_executable(deepseek_ai src/main.cpp ${LIB_SOURCES})
 
 # Test executable (uses test mains)
-add_executable(transformer_test ${TEST_SOURCES} ${LIB_SOURCES})
+add_executable(transformer_test test/transformer_test.cpp ${LIB_SOURCES})
+add_test(NAME transformer_test COMMAND transformer_test)
 
 # Include directories
 # Include headers
 target_include_directories(deepseek_ai PRIVATE include)
 target_include_directories(transformer_test PRIVATE include)
+
+# Unit test for Tensor operations
+add_executable(tensor_test test/tensor_test.cpp ${LIB_SOURCES})
+target_include_directories(tensor_test PRIVATE include)
+if(APPLE)
+  target_compile_definitions(tensor_test PRIVATE USE_ACCELERATE)
+  target_link_libraries(tensor_test PRIVATE "-framework Accelerate")
+endif()
+add_test(NAME tensor_test COMMAND tensor_test)
   
 # BPE training tool
 add_executable(train_bpe src/train_bpe.cpp)
