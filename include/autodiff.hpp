@@ -49,6 +49,8 @@ std::shared_ptr<ADTensor> sum(const std::shared_ptr<ADTensor>& a);
 void register_parameter(const std::shared_ptr<ADTensor>& p);
 // Retrieve all registered parameters
 std::vector<std::shared_ptr<ADTensor>>& get_parameters();
+// Clear the parameter registry (for fresh graph executions)
+void clear_parameters();
 // Transpose tensor (swap rows and cols)
 std::shared_ptr<ADTensor> transpose(const std::shared_ptr<ADTensor>& a);
 // Slice rows [row_offset .. row_offset+row_count) of a

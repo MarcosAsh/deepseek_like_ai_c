@@ -57,6 +57,10 @@ void register_parameter(const std::shared_ptr<ADTensor>& p) {
 std::vector<std::shared_ptr<ADTensor>>& get_parameters() {
     return param_list;
 }
+void clear_parameters() {
+    std::lock_guard<std::mutex> lock(param_mutex);
+    param_list.clear();
+}
 
 std::shared_ptr<ADTensor> add(const std::shared_ptr<ADTensor>& a,
                               const std::shared_ptr<ADTensor>& b) {

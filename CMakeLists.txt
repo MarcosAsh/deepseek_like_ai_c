@@ -19,9 +19,11 @@ set(CMAKE_EXE_LINKER_FLAGS_RELEASE "${CMAKE_EXE_LINKER_FLAGS_RELEASE} -flto")
 file(GLOB_RECURSE ALL_SRC "src/*.cpp")
 file(GLOB_RECURSE TEST_SOURCES "test/*.cpp")
 
-# Separate library sources (exclude main.cpp and train_bpe.cpp)
+# Separate library sources (exclude entry points and server-specific code)
 list(FILTER ALL_SRC EXCLUDE REGEX "src/main\\.cpp$")
 list(FILTER ALL_SRC EXCLUDE REGEX "src/train_bpe\\.cpp$")
+list(FILTER ALL_SRC EXCLUDE REGEX "src/node_server_main\\.cpp$")
+list(FILTER ALL_SRC EXCLUDE REGEX "src/server/")
 set(LIB_SOURCES ${ALL_SRC})
 
 # Main executable (includes main.cpp)
@@ -111,6 +113,18 @@ add_test(NAME quantization_test COMMAND quantization_test)
 # BPE training tool
 add_executable(train_bpe src/train_bpe.cpp)
 target_include_directories(train_bpe PRIVATE include)
+
+# Node graph server
+file(GLOB SERVER_SOURCES "src/server/*.cpp")
+add_executable(node_server src/node_server_main.cpp ${SERVER_SOURCES} ${LIB_SOURCES})
+target_include_directories(node_server PRIVATE include)
+# httplib requires threads
+find_package(Threads REQUIRED)
+target_link_libraries(node_server PRIVATE Threads::Threads)
+if(APPLE)
+  target_compile_definitions(node_server PRIVATE USE_ACCELERATE)
+  target_link_libraries(node_server PRIVATE "-framework Accelerate")
+endif()
 
 # On Apple platforms, use Accelerate framework for optimized BLAS
 if(APPLE)
