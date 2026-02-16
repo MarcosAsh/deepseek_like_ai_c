@@ -15,7 +15,6 @@ void SGD::step() {
     }
     // Apply fake quantization after weight update if QAT enabled
     if (quant::g_qat_enabled) {
-        auto& params = get_parameters();
         for (auto& p : params) {
             quant::fake_quantize_inplace(p->val);
         }
@@ -85,7 +84,6 @@ void AdamW::step() {
     }
     // Apply fake quantization after weight update if QAT enabled
     if (quant::g_qat_enabled) {
-        auto& params = get_parameters();
         for (auto& p : params) {
             quant::fake_quantize_inplace(p->val);
         }

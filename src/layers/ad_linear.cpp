@@ -21,14 +21,15 @@ ADLinear::ADLinear(int input_dim, int output_dim) {
 
 std::shared_ptr<ADTensor> ADLinear::forward(
     const std::shared_ptr<ADTensor>& x) const {
-    // W * x
     auto y = matmul(W, x);
-    // broadcast b across seq_len
     int seq_len = x->val.cols;
-    Tensor ones_row_t(1, seq_len);
-    ones_row_t.data.assign(seq_len, 1.0f);
-    auto ones_row = make_ad(ones_row_t);
-    auto b_mat = matmul(b, ones_row);  // [output_dim x seq_len]
-    auto out = add(y, b_mat);
-    return out;
+    // Reuse cached ones tensor data if seq_len unchanged
+    if (seq_len != cached_seq_len) {
+        cached_ones_row = Tensor(1, seq_len);
+        cached_ones_row.data.assign(seq_len, 1.0f);
+        cached_seq_len = seq_len;
+    }
+    auto ones_row = make_ad(cached_ones_row);
+    auto b_mat = matmul(b, ones_row);
+    return add(y, b_mat);
 }

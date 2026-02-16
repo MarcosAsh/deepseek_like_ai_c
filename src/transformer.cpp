@@ -1,24 +1,28 @@
-#include "../include/transformer.hpp"
+#include "transformer.hpp"
 
 TransformerBlock::TransformerBlock(int input_dim, int hidden_dim,
                                    int n_heads)
     : ln1(input_dim),
-      mha(input_dim, n_heads),
+      mha(input_dim, n_heads, true),  // causal=true for autoregressive
       ln2(input_dim),
       ff(input_dim, hidden_dim),
       dropout1(0.1f),
       dropout2(0.1f) {}
 
-Tensor TransformerBlock::forward(const Tensor& input, bool training) {
+Tensor TransformerBlock::forward(const Tensor& input, bool training, bool use_cache) {
     Tensor norm_out1 = ln1.forward(input);
-    Tensor attn_out = mha.forward(norm_out1);
+    Tensor attn_out = mha.forward(norm_out1, training, use_cache);
     attn_out = dropout1.forward(attn_out, training);
     Tensor out1 = attn_out + input;  // Residual connection
 
     Tensor norm_out2 = ln2.forward(out1);
-    Tensor ff_out = ff.forward(norm_out2);
+    Tensor ff_out = ff.forward(norm_out2, training);
     ff_out = dropout2.forward(ff_out, training);
     return ff_out + out1;           // Residual connection
+}
+
+void TransformerBlock::clear_cache() {
+    mha.clear_cache();
 }
 
 Transformer::Transformer(int num_layers, int input_dim,
@@ -28,10 +32,16 @@ Transformer::Transformer(int num_layers, int input_dim,
     }
 }
 
-Tensor Transformer::forward(const Tensor& input, bool training) {
+Tensor Transformer::forward(const Tensor& input, bool training, bool use_cache) {
     Tensor output = input;
     for (auto& block : blocks) {
-        output = block.forward(output, training);
+        output = block.forward(output, training, use_cache);
     }
     return output;
+}
+
+void Transformer::clear_cache() {
+    for (auto& block : blocks) {
+        block.clear_cache();
+    }
 }

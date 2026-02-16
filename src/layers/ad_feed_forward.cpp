@@ -22,17 +22,21 @@ ADFeedForward::ADFeedForward(int embed_dim, int hidden_dim) {
 }
 
 std::shared_ptr<ADTensor> ADFeedForward::forward(const std::shared_ptr<ADTensor>& x) {
-    // First linear + bias: h1 = W1 * x + b1
-    // First linear + bias (broadcast b1 across seq_len)
+    int seq_len = x->val.cols;
+    // Cache ones tensors for bias broadcast
+    if (seq_len != cached_seq_len) {
+        cached_ones1 = Tensor(1, seq_len);
+        cached_ones1.data.assign(seq_len, 1.0f);
+        cached_ones2 = Tensor(1, seq_len);
+        cached_ones2.data.assign(seq_len, 1.0f);
+        cached_seq_len = seq_len;
+    }
+    // First linear + bias
     auto lin1 = matmul(W1, x);
-    // create ones row [1 x seq_len]
-    Tensor ones_row1_t(1, x->val.cols);
-    ones_row1_t.data.assign(x->val.cols, 1.0f);
-    auto ones_row1 = make_ad(ones_row1_t);
-    auto b1_mat = matmul(b1, ones_row1);  // [hidden_dim x seq_len]
+    auto ones_row1 = make_ad(cached_ones1);
+    auto b1_mat = matmul(b1, ones_row1);
     auto h1 = add(lin1, b1_mat);
-    // GELU activation: approximate
-    // x * 0.5 * (1 + tanh(0.79788456*(x + 0.044715*x^3)))
+    // GELU activation: x * 0.5 * (1 + tanh(0.79788456*(x + 0.044715*x^3)))
     auto x3 = mul(mul(h1, h1), h1);
     auto inner = add(h1, scalar_mul(x3, 0.044715f));
     auto tanh_in = scalar_mul(inner, 0.79788456f);
@@ -41,12 +45,8 @@ std::shared_ptr<ADTensor> ADFeedForward::forward(const std::shared_ptr<ADTensor>
     one->val.fill(1.0f);
     auto gelu = mul(scalar_mul(h1, 0.5f), add(one, tanh_out));
     // Second linear + bias
-    // Second linear + bias (broadcast b2)
     auto lin2 = matmul(W2, gelu);
-    Tensor ones_row2_t(1, x->val.cols);
-    ones_row2_t.data.assign(x->val.cols, 1.0f);
-    auto ones_row2 = make_ad(ones_row2_t);
-    auto b2_mat = matmul(b2, ones_row2);  // [embed_dim x seq_len]
-    auto h2 = add(lin2, b2_mat);
-    return h2;
+    auto ones_row2 = make_ad(cached_ones2);
+    auto b2_mat = matmul(b2, ones_row2);
+    return add(lin2, b2_mat);
 }

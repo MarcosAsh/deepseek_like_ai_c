@@ -18,7 +18,6 @@
 #include <cstdint>
 #include "timer.hpp"
 // Unified memory pool manager
-// Unified memory pool manager
 #include "memory_pool.hpp"
 #include "quantization.hpp"
 #include "loss.hpp"
@@ -55,6 +54,7 @@ static bool load_checkpoint(const std::string& path) {
     }
     // Load available parameters
     uint32_t to_load = std::min<uint32_t>(num, (uint32_t)params.size());
+    int shape_mismatches = 0;
     for (uint32_t i = 0; i < to_load; ++i) {
         auto& p = params[i];
         uint32_t r = 0, c = 0;
@@ -63,13 +63,212 @@ static bool load_checkpoint(const std::string& path) {
         if (r != (uint32_t)p->val.rows || c != (uint32_t)p->val.cols) {
             std::cerr << "Warning: checkpoint param shape mismatch (" << r << "x" << c
                       << " vs " << p->val.rows << "x" << p->val.cols << "), skipping\n";
-            // skip data
             in.seekg((std::streamoff)r * c * sizeof(float), std::ios::cur);
+            ++shape_mismatches;
+            if (shape_mismatches > 3) {
+                std::cerr << "Error: too many shape mismatches (>3), aborting checkpoint load\n";
+                return false;
+            }
         } else {
             in.read(reinterpret_cast<char*>(p->val.data.data()), r * c * sizeof(float));
         }
     }
     return true;
+}
+
+// Sample next token from logit vector using top-k, top-p, and temperature
+static int sample_next_token(const std::vector<float>& logits_in,
+                             int top_k, float top_p, float temperature,
+                             std::mt19937& rng) {
+    int V = (int)logits_in.size();
+    // Apply temperature scaling
+    std::vector<float> logit_v(V);
+    for (int i = 0; i < V; ++i) logit_v[i] = logits_in[i] / temperature;
+
+    // Numerical stability: subtract max before exp
+    float max_logit = *std::max_element(logit_v.begin(), logit_v.end());
+
+    if (top_k > 0) {
+        int k = std::min(top_k, V);
+        std::vector<int> idxs(V);
+        std::iota(idxs.begin(), idxs.end(), 0);
+        std::partial_sort(idxs.begin(), idxs.begin() + k, idxs.end(),
+                          [&](int a, int b) { return logit_v[a] > logit_v[b]; });
+        std::vector<float> weights(V, 0.0f);
+        for (int j = 0; j < k; ++j)
+            weights[idxs[j]] = std::exp(logit_v[idxs[j]] - max_logit);
+        std::discrete_distribution<int> dist(weights.begin(), weights.end());
+        return dist(rng);
+    } else if (top_p > 0.0f) {
+        std::vector<float> probs(V);
+        for (int i = 0; i < V; ++i) probs[i] = std::exp(logit_v[i] - max_logit);
+        float sum_probs = std::accumulate(probs.begin(), probs.end(), 0.0f);
+        std::vector<int> idxs(V);
+        std::iota(idxs.begin(), idxs.end(), 0);
+        std::sort(idxs.begin(), idxs.end(), [&](int a, int b) { return probs[a] > probs[b]; });
+        std::vector<float> weights(V, 0.0f);
+        float cum = 0.0f;
+        for (int j = 0; j < V; ++j) {
+            int i = idxs[j]; cum += probs[i]; weights[i] = probs[i];
+            if (cum / sum_probs >= top_p) break;
+        }
+        std::discrete_distribution<int> dist(weights.begin(), weights.end());
+        return dist(rng);
+    } else {
+        // Greedy
+        return std::max_element(logit_v.begin(), logit_v.end()) - logit_v.begin();
+    }
+}
+
+// Generate tokens autoregressively using AD model
+struct GenerateConfig {
+    int max_new_tokens;
+    int seq_len;
+    int top_k;
+    float top_p;
+    float temperature;
+    int eos_id;
+};
+static std::vector<int> generate_tokens(
+    const std::vector<int>& prompt_tokens,
+    ADEmbedding& ad_embed,
+    ADPositionalEncoding& ad_posenc,
+    ADTransformer& ad_transformer,
+    const std::shared_ptr<ADTensor>& W_embed,
+    const std::shared_ptr<ADTensor>& b_lm,
+    int vocab_size,
+    const GenerateConfig& cfg,
+    std::mt19937& rng) {
+    std::vector<int> output_tokens = prompt_tokens;
+    for (int step = 0; step < cfg.max_new_tokens; ++step) {
+        int context_len = std::min((int)output_tokens.size(), cfg.seq_len);
+        std::vector<int> input_ids(output_tokens.end() - context_len, output_tokens.end());
+        auto embed_ad = ad_embed.forward(input_ids);
+        auto pos_ad = ad_posenc.forward(context_len);
+        auto x_ad = add(embed_ad, pos_ad);
+        auto h_ad = ad_transformer.forward(x_ad);
+        // Compute logits via tied embedding weights
+        auto Wt = transpose(W_embed);
+        auto logits_ad = matmul(Wt, h_ad);
+        // Broadcast bias
+        Tensor ones_bias_t(1, context_len);
+        ones_bias_t.data.assign(context_len, 1.0f);
+        auto ones_bias = make_ad(ones_bias_t);
+        auto b_mat = matmul(b_lm, ones_bias);
+        logits_ad = add(logits_ad, b_mat);
+        Tensor logits = logits_ad->val;
+        int last_idx = context_len - 1;
+        // Extract logits for last position
+        std::vector<float> logit_v(vocab_size);
+        for (int i = 0; i < vocab_size; ++i) logit_v[i] = logits(i, last_idx);
+        int next_id = sample_next_token(logit_v, cfg.top_k, cfg.top_p, cfg.temperature, rng);
+        output_tokens.push_back(next_id);
+        if (cfg.eos_id >= 0 && next_id == cfg.eos_id) break;
+    }
+    return output_tokens;
+}
+
+// Sync AD parameter values into non-AD Transformer for KV-cached inference.
+// AD param registration order per block: ln1(gamma,beta), mha(W_q,W_k,W_v,W_o),
+// ln2(gamma,beta), ff(W1,b1,W2,b2) = 12 params per block.
+// Before blocks: embed(1 param), posenc(0 params).
+// After blocks: b_lm(1 param).
+static void sync_ad_to_inference(
+    const std::vector<std::shared_ptr<ADTensor>>& params,
+    int embed_param_idx,       // index of embedding weight param
+    int block_start_idx,       // index where first block's params start
+    int lm_bias_idx,           // index of b_lm param
+    int num_layers,
+    Embedding& embed,
+    Transformer& transformer,
+    Tensor& out_W,             // [vocab_size x embed_dim]
+    Tensor& out_b) {           // [vocab_size x 1]
+    // Sync embedding weights
+    embed.weights = params[embed_param_idx]->val;
+
+    // Sync transformer blocks
+    int params_per_block = 12;
+    for (int layer = 0; layer < num_layers; ++layer) {
+        int base = block_start_idx + layer * params_per_block;
+        auto& block = transformer.blocks[layer];
+        // LN1 gamma, beta
+        block.ln1.gamma = params[base+0]->val;
+        block.ln1.beta  = params[base+1]->val;
+        // MHA W_q, W_k, W_v, W_o
+        block.mha.W_q = params[base+2]->val;
+        block.mha.W_k = params[base+3]->val;
+        block.mha.W_v = params[base+4]->val;
+        block.mha.W_o = params[base+5]->val;
+        // LN2 gamma, beta
+        block.ln2.gamma = params[base+6]->val;
+        block.ln2.beta  = params[base+7]->val;
+        // FF: W1, b1, W2, b2
+        block.ff.fc1.weights = params[base+8]->val;
+        block.ff.fc1.bias    = params[base+9]->val;
+        block.ff.fc2.weights = params[base+10]->val;
+        block.ff.fc2.bias    = params[base+11]->val;
+    }
+    // Output projection: tied embedding transposed + LM head bias
+    out_W = params[embed_param_idx]->val.transpose();  // [vocab_size x embed_dim]
+    out_b = params[lm_bias_idx]->val;                  // [vocab_size x 1]
+}
+
+// Generate tokens using non-AD Transformer with KV cache (faster inference)
+static std::vector<int> generate_tokens_cached(
+    const std::vector<int>& prompt_tokens,
+    Embedding& embed_layer,
+    PositionalEncoding& posenc,
+    Transformer& transformer,
+    const Tensor& out_W,   // [vocab_size x embed_dim]
+    const Tensor& out_b,   // [vocab_size x 1]
+    int vocab_size,
+    const GenerateConfig& cfg,
+    std::mt19937& rng) {
+    transformer.clear_cache();
+    std::vector<int> output_tokens = prompt_tokens;
+
+    // Prefill: process entire prompt at once
+    {
+        Tensor x = embed_layer.forward(prompt_tokens);
+        Tensor pos = posenc.forward((int)prompt_tokens.size());
+        // x + pos
+        for (size_t i = 0; i < x.data.size(); ++i) x.data[i] += pos.data[i];
+        Tensor h = transformer.forward(x, false, true);  // use_cache=true
+        // Extract logits for last position only
+        int last_idx = (int)prompt_tokens.size() - 1;
+        Tensor h_last(h.rows, 1);
+        for (int r = 0; r < h.rows; ++r) h_last.data[r] = h(r, last_idx);
+        Tensor logits = out_W.matmul(h_last);
+        // Add bias
+        for (int i = 0; i < vocab_size; ++i) logits.data[i] += out_b.data[i];
+        std::vector<float> logit_v(vocab_size);
+        for (int i = 0; i < vocab_size; ++i) logit_v[i] = logits.data[i];
+        int next_id = sample_next_token(logit_v, cfg.top_k, cfg.top_p, cfg.temperature, rng);
+        output_tokens.push_back(next_id);
+        if (cfg.eos_id >= 0 && next_id == cfg.eos_id)
+            return output_tokens;
+    }
+
+    // Decode: process one token at a time with KV cache
+    for (int step = 1; step < cfg.max_new_tokens; ++step) {
+        int token = output_tokens.back();
+        Tensor x = embed_layer.forward({token});  // [embed_dim x 1]
+        int pos_idx = (int)output_tokens.size() - 1;
+        Tensor pos = posenc.forward(pos_idx + 1);  // get full encoding, take last col
+        // Add positional encoding for current position
+        for (int r = 0; r < x.rows; ++r)
+            x.data[r] += pos(r, pos_idx);
+        Tensor h = transformer.forward(x, false, true);  // use_cache=true, processes single token
+        // Compute logits
+        Tensor logits = out_W.matmul(h);
+        for (int i = 0; i < vocab_size; ++i) logits.data[i] += out_b.data[i];
+        std::vector<float> logit_v(vocab_size);
+        for (int i = 0; i < vocab_size; ++i) logit_v[i] = logits.data[i];
+        int next_id = sample_next_token(logit_v, cfg.top_k, cfg.top_p, cfg.temperature, rng);
+        output_tokens.push_back(next_id);
+        if (cfg.eos_id >= 0 && next_id == cfg.eos_id) break;
+    }
+    return output_tokens;
 }
 
 // Simple ASCII sparkline for loss visualization
@@ -122,6 +321,12 @@ int main(int argc, char** argv) {
     // Sampling strategy: top-k or top-p (nucleus) sampling; defaults to greedy if both disabled
     int top_k = 0;
     float top_p = 0.0f;
+    float temperature = 1.0f;
+    // MoE parameters
+    bool use_moe = false;
+    int moe_num_experts = 4;
+    int moe_top_k_experts = 2;
+    float moe_aux_weight = 0.01f;
 
     // Parse command-line args (manual parser)
     for (int i = 1; i < argc; ++i) {
@@ -171,6 +376,8 @@ int main(int argc, char** argv) {
         } else if (arg == "--top_p" && i + 1 < argc) {
             // Top-p (nucleus) sampling (greedy if 0)
             top_p = std::stof(argv[++i]);
+        } else if (arg == "--temperature" && i + 1 < argc) {
+            temperature = std::stof(argv[++i]);
         } else if (arg == "--bpe-codes" && i + 1 < argc) {
             // Path to BPE merge rules file
             bpe_codes_file = argv[++i];
@@ -186,6 +393,16 @@ int main(int argc, char** argv) {
         } else if (arg == "--pool_size_mb" && i + 1 < argc) {
             // On-chip unified memory pool size in megabytes
             pool_size_mb = std::stol(argv[++i]);
+        } else if (arg == "--timer") {
+            Timer::enabled = true;
+        } else if (arg == "--moe") {
+            use_moe = true;
+        } else if (arg == "--num_experts" && i + 1 < argc) {
+            moe_num_experts = std::stoi(argv[++i]);
+        } else if (arg == "--moe_top_k" && i + 1 < argc) {
+            moe_top_k_experts = std::stoi(argv[++i]);
+        } else if (arg == "--moe_aux_weight" && i + 1 < argc) {
+            moe_aux_weight = std::stof(argv[++i]);
         } else if (arg == "--help") {
             std::cout << "Usage: deepseek_ai [--train data.txt] [--generate prompt.txt] [options]\n"
                       << "Modes:\n"
@@ -210,9 +427,15 @@ int main(int argc, char** argv) {
                       << "  --max_new_tokens N   maximum tokens to generate (default: 32)\n"
                       << "  --top_k N            top-k sampling (0=greedy)\n"
                       << "  --top_p FLOAT        top-p (nucleus) sampling (0=greedy)\n"
+                      << "  --temperature FLOAT  sampling temperature (default: 1.0)\n"
                       << "  --qat                enable quantization-aware training (fake quant)\n"
                       << "  --qat-bits N         bits for quantization (default: 8)\n"
-                      << "  --ptq-out PATH       output path for post-training quantized model\n";
+                      << "  --ptq-out PATH       output path for post-training quantized model\n"
+                      << "  --timer              enable performance timers\n"
+                      << "  --moe                enable Mixture of Experts\n"
+                      << "  --num_experts N      number of MoE experts (default: 4)\n"
+                      << "  --moe_top_k N        experts per token (default: 2)\n"
+                      << "  --moe_aux_weight F   aux loss weight (default: 0.01)\n";
             return 0;
         } else {
             std::cerr << "Unknown option or missing argument: " << arg << "\n";
@@ -233,20 +456,15 @@ int main(int argc, char** argv) {
     }
     // Interactive CLI REPL mode
     if (mode == "cli") {
-        // Load tokenizer for CLI
         Tokenizer tokenizer(vocab_file, bpe_codes_file);
-        // Build AD modules once
-        ADEmbedding ad_embed(tokenizer.vocab_size(), embed_dim);
+        int V = (int)tokenizer.vocab_size();
+        // Build AD modules to load checkpoint
+        ADEmbedding ad_embed(V, embed_dim);
         ADPositionalEncoding ad_posenc(embed_dim, max_len);
-        ADTransformer ad_transformer(num_layers, embed_dim, hidden_dim, n_heads);
-        // Tied Embedding-LM head: share embedding weights
-        auto W_embed = ad_embed.get_weights(); // [embed_dim x vocab_size]
-        // Bias for LM head
-        Tensor tb_lm((int)tokenizer.vocab_size(), 1);
-        tb_lm.data.assign(tokenizer.vocab_size(), 0.0f);
-        auto b_lm = make_ad(tb_lm);
-        register_parameter(b_lm);
-        // Load checkpoint
+        ADTransformer ad_transformer(num_layers, embed_dim, hidden_dim, n_heads, use_moe, moe_num_experts, moe_top_k_experts);
+        auto W_embed = ad_embed.get_weights();
+        Tensor tb_lm(V, 1); tb_lm.data.assign(V, 0.0f);
+        auto b_lm = make_ad(tb_lm); register_parameter(b_lm);
         if (!resume_file.empty()) {
             if (!load_checkpoint(resume_file)) return 1;
             std::cout << "Loaded checkpoint from " << resume_file << "\n";
@@ -254,112 +472,50 @@ int main(int argc, char** argv) {
             if (!load_checkpoint(save_file)) return 1;
             std::cout << "Loaded checkpoint from " << save_file << "\n";
         }
-        // Prepare RNG and EOS
+        // Build non-AD inference model and sync weights for KV-cached generation
+        Embedding inf_embed(V, embed_dim);
+        PositionalEncoding inf_posenc(embed_dim, max_len);
+        Transformer inf_transformer(num_layers, embed_dim, hidden_dim, n_heads);
+        Tensor out_W(V, embed_dim), out_b(V, 1);
+        auto& params = get_parameters();
+        // Param layout: embed(0), blocks start at 1, b_lm is last
+        sync_ad_to_inference(params, 0, 1, (int)params.size()-1, num_layers,
+                             inf_embed, inf_transformer, out_W, out_b);
         std::mt19937 gen(std::random_device{}());
-        int eos_id = tokenizer.to_id("</s>");
-        // REPL loop
+        GenerateConfig cfg{max_new_tokens, seq_len, top_k, top_p, temperature,
+                           tokenizer.to_id("</s>")};
         std::string line;
         while (true) {
             std::cout << ">> " << std::flush;
             if (!std::getline(std::cin, line)) break;
             if (line.empty() || line == "exit") break;
-            // Tokenize input
             auto tokens = tokenizer.encode(line);
-            std::vector<int> output_tokens = tokens;
-            // Generate up to max_new_tokens
-            for (int step = 0; step < max_new_tokens; ++step) {
-                int context_len = std::min((int)output_tokens.size(), seq_len);
-                std::vector<int> input_ids(output_tokens.end() - context_len, output_tokens.end());
-                auto embed_ad = ad_embed.forward(input_ids);
-                auto pos_ad = ad_posenc.forward(context_len);
-                auto x_ad = add(embed_ad, pos_ad);
-                auto h_ad = ad_transformer.forward(x_ad);
-                // Compute logits via tied embedding weights: logits = W_embed^T * h_ad + b_lm
-                auto Wt = transpose(W_embed);  // [vocab_size x embed_dim]
-                auto logits_ad = matmul(Wt, h_ad);  // [vocab_size x seq_len]
-                // Broadcast bias using existing context_len
-                Tensor ones_bias_t(1, context_len);
-                ones_bias_t.data.assign(context_len, 1.0f);
-                auto ones_bias = make_ad(ones_bias_t);
-                auto b_mat = matmul(b_lm, ones_bias);  // [vocab_size x seq_len]
-                logits_ad = add(logits_ad, b_mat);
-                Tensor logits = logits_ad->val;
-                int V = (int)tokenizer.vocab_size();
-                int last_idx = context_len - 1;
-                std::vector<float> logit_v(V);
-                for (int i = 0; i < V; ++i) logit_v[i] = logits(i, last_idx);
-                int next_id = 0;
-                if (top_k > 0) {
-                    // top-k sampling
-                    int k = std::min(top_k, V);
-                    std::vector<int> idxs(V);
-                    std::iota(idxs.begin(), idxs.end(), 0);
-                    std::partial_sort(idxs.begin(), idxs.begin() + k, idxs.end(),
-                                      [&](int a, int b) { return logit_v[a] > logit_v[b]; });
-                    std::vector<char> mask(V, false);
-                    for (int j = 0; j < k; ++j) mask[idxs[j]] = true;
-                    std::vector<float> weights(V, 0.0f);
-                    for (int i = 0; i < V; ++i) if (mask[i]) weights[i] = std::exp(logit_v[i]);
-                    std::discrete_distribution<int> dist(weights.begin(), weights.end());
-                    next_id = dist(gen);
-                } else if (top_p > 0.0f) {
-                    // top-p sampling
-                    std::vector<float> probs(V);
-                    for (int i = 0; i < V; ++i) probs[i] = std::exp(logit_v[i]);
-                    float sum_probs = std::accumulate(probs.begin(), probs.end(), 0.0f);
-                    std::vector<int> idxs(V);
-                    std::iota(idxs.begin(), idxs.end(), 0);
-                    std::sort(idxs.begin(), idxs.end(), [&](int a, int b) { return probs[a] > probs[b]; });
-                    std::vector<char> mask(V, false);
-                    float cum = 0.0f;
-                    for (int j = 0; j < V; ++j) {
-                        int i = idxs[j]; cum += probs[i]; mask[i] = true;
-                        if (cum / sum_probs >= top_p) break;
-                    }
-                    std::vector<float> weights(V, 0.0f);
-                    for (int i = 0; i < V; ++i) if (mask[i]) weights[i] = probs[i];
-                    std::discrete_distribution<int> dist(weights.begin(), weights.end());
-                    next_id = dist(gen);
-                } else {
-                    // greedy
-                    next_id = std::max_element(logit_v.begin(), logit_v.end()) - logit_v.begin();
-                }
-                output_tokens.push_back(next_id);
-                if (eos_id >= 0 && next_id == eos_id) break;
-            }
-            // Decode and print
+            auto output_tokens = generate_tokens_cached(tokens, inf_embed, inf_posenc,
+                inf_transformer, out_W, out_b, V, cfg, gen);
             std::cout << tokenizer.decode(output_tokens) << std::endl;
         }
         return 0;
     }
     // One-shot generate mode
     if (mode == "generate") {
-        // Load tokenizer and prompt
         Tokenizer tokenizer(vocab_file, bpe_codes_file);
+        int V = (int)tokenizer.vocab_size();
         std::string prompt;
         if (!generate_file.empty()) {
             std::ifstream gin(generate_file);
             if (!gin) { std::cerr << "Cannot open prompt file: " << generate_file << "\n"; return 1; }
-            std::ostringstream gss;
-            gss << gin.rdbuf();
-            prompt = gss.str();
+            std::ostringstream gss; gss << gin.rdbuf(); prompt = gss.str();
         } else {
-            std::cerr << "No prompt file provided for generation\n";
-            return 1;
+            std::cerr << "No prompt file provided for generation\n"; return 1;
         }
         auto tokens = tokenizer.encode(prompt);
-        // Build AD modules for inference and register parameters
-        ADEmbedding ad_embed(tokenizer.vocab_size(), embed_dim);
+        // Build AD modules to load checkpoint
+        ADEmbedding ad_embed(V, embed_dim);
         ADPositionalEncoding ad_posenc(embed_dim, max_len);
-        ADTransformer ad_transformer(num_layers, embed_dim, hidden_dim, n_heads);
-        // Tied Embedding-LM head: share embedding weights
-        auto W_embed = ad_embed.get_weights(); // [embed_dim x vocab_size]
-        // Bias for LM head
-        Tensor tb_lm((int)tokenizer.vocab_size(), 1);
-        tb_lm.data.assign(tokenizer.vocab_size(), 0.0f);
-        auto b_lm = make_ad(tb_lm);
-        register_parameter(b_lm);
-        // Load checkpoint
+        ADTransformer ad_transformer(num_layers, embed_dim, hidden_dim, n_heads, use_moe, moe_num_experts, moe_top_k_experts);
+        auto W_embed = ad_embed.get_weights();
+        Tensor tb_lm(V, 1); tb_lm.data.assign(V, 0.0f);
+        auto b_lm = make_ad(tb_lm); register_parameter(b_lm);
         if (!resume_file.empty()) {
             if (!load_checkpoint(resume_file)) return 1;
             std::cout << "Loaded checkpoint from " << resume_file << "\n";
@@ -367,80 +523,20 @@ int main(int argc, char** argv) {
             if (!load_checkpoint(save_file)) return 1;
             std::cout << "Loaded checkpoint from " << save_file << "\n";
         }
-        // Generate tokens (sampling or greedy)
-        // Random generator for sampling
+        // Build non-AD inference model and sync weights
+        Embedding inf_embed(V, embed_dim);
+        PositionalEncoding inf_posenc(embed_dim, max_len);
+        Transformer inf_transformer(num_layers, embed_dim, hidden_dim, n_heads);
+        Tensor out_W(V, embed_dim), out_b(V, 1);
+        auto& params = get_parameters();
+        sync_ad_to_inference(params, 0, 1, (int)params.size()-1, num_layers,
+                             inf_embed, inf_transformer, out_W, out_b);
         std::mt19937 gen(std::random_device{}());
-        // EOS detection
-        int eos_id = tokenizer.to_id("</s>");
-        std::vector<int> output_tokens = tokens;
-        for (int step = 0; step < max_new_tokens; ++step) {
-            int context_len = std::min((int)output_tokens.size(), seq_len);
-            std::vector<int> input_ids(output_tokens.end() - context_len, output_tokens.end());
-            auto embed_ad = ad_embed.forward(input_ids);
-            auto pos_ad = ad_posenc.forward(context_len);
-            auto x_ad = add(embed_ad, pos_ad);
-            auto h_ad = ad_transformer.forward(x_ad);
-            // Compute logits via tied embedding weights
-            auto Wt = transpose(W_embed);  // [vocab_size x embed_dim]
-            auto logits_ad = matmul(Wt, h_ad);  // [vocab_size x seq_len]
-            // Broadcast bias using existing context_len
-            Tensor ones_bias_t(1, context_len);
-            ones_bias_t.data.assign(context_len, 1.0f);
-            auto ones_bias = make_ad(ones_bias_t);
-            auto b_mat = matmul(b_lm, ones_bias);  // [vocab_size x seq_len]
-            logits_ad = add(logits_ad, b_mat);
-            Tensor logits = logits_ad->val;  // [vocab_size x seq_len]
-            int V = (int)tokenizer.vocab_size();
-            int last_idx = context_len - 1;
-            // Extract logits for last position
-            std::vector<float> logit_v(V);
-            for (int i = 0; i < V; ++i) logit_v[i] = logits(i, last_idx);
-            int next_id = 0;
-            if (top_k > 0) {
-                // Top-k sampling
-                int k = std::min(top_k, V);
-                std::vector<int> idxs(V);
-                std::iota(idxs.begin(), idxs.end(), 0);
-                std::partial_sort(idxs.begin(), idxs.begin() + k, idxs.end(),
-                                  [&](int a, int b) { return logit_v[a] > logit_v[b]; });
-                std::vector<char> mask(V, false);
-                for (int j = 0; j < k; ++j) mask[idxs[j]] = true;
-                std::vector<float> weights(V, 0.0f);
-                for (int i = 0; i < V; ++i) if (mask[i]) weights[i] = std::exp(logit_v[i]);
-                std::discrete_distribution<int> dist(weights.begin(), weights.end());
-                next_id = dist(gen);
-            } else if (top_p > 0.0f) {
-                // Nucleus (top-p) sampling
-                std::vector<float> probs(V);
-                for (int i = 0; i < V; ++i) probs[i] = std::exp(logit_v[i]);
-                float sum_probs = std::accumulate(probs.begin(), probs.end(), 0.0f);
-                std::vector<int> idxs(V);
-                std::iota(idxs.begin(), idxs.end(), 0);
-                std::sort(idxs.begin(), idxs.end(),
-                          [&](int a, int b) { return probs[a] > probs[b]; });
-                std::vector<char> mask(V, false);
-                float cum = 0.0f;
-                for (int j = 0; j < V; ++j) {
-                    int i = idxs[j];
-                    cum += probs[i];
-                    mask[i] = true;
-                    if (cum / sum_probs >= top_p) break;
-                }
-                std::vector<float> weights(V, 0.0f);
-                for (int i = 0; i < V; ++i) if (mask[i]) weights[i] = probs[i];
-                std::discrete_distribution<int> dist(weights.begin(), weights.end());
-                next_id = dist(gen);
-            } else {
-                // Greedy sampling
-                next_id = std::max_element(logit_v.begin(), logit_v.end()) - logit_v.begin();
-            }
-            output_tokens.push_back(next_id);
-            // Stop if EOS token generated
-            if (eos_id >= 0 && next_id == eos_id) break;
-        }
-        // Decode and print generated tokens
-        std::string result = tokenizer.decode(output_tokens);
-        std::cout << result << std::endl;
+        GenerateConfig cfg{max_new_tokens, seq_len, top_k, top_p, temperature,
+                           tokenizer.to_id("</s>")};
+        auto output_tokens = generate_tokens_cached(tokens, inf_embed, inf_posenc,
+            inf_transformer, out_W, out_b, V, cfg, gen);
+        std::cout << tokenizer.decode(output_tokens) << std::endl;
         return 0;
     }
     // Training mode must be explicitly set
@@ -458,6 +554,10 @@ int main(int argc, char** argv) {
               << " lr=" << lr << "\n"
               << "Validation file: " << (valid_file.empty() ? std::string("none") : valid_file) << "\n"
               << "Early stopping patience: " << patience << "\n";
+    if (use_moe) {
+        std::cout << "MoE enabled: " << moe_num_experts << " experts, top-"
+                  << moe_top_k_experts << ", aux_weight=" << moe_aux_weight << "\n";
+    }
 
     // Load tokenizer and dataset
     Tokenizer tokenizer(vocab_file, bpe_codes_file);
@@ -501,7 +601,7 @@ int main(int argc, char** argv) {
     // AD Model components
     ADEmbedding ad_embed(tokenizer.vocab_size(), embed_dim);
     ADPositionalEncoding ad_posenc(embed_dim, max_len);
-    ADTransformer ad_transformer(num_layers, embed_dim, hidden_dim, n_heads);
+    ADTransformer ad_transformer(num_layers, embed_dim, hidden_dim, n_heads, use_moe, moe_num_experts, moe_top_k_experts);
     // Tied Embedding-LM head weights
     auto W_embed = ad_embed.get_weights(); // [embed_dim x vocab_size]
     // Bias for LM head
@@ -519,7 +619,6 @@ int main(int argc, char** argv) {
     }
 
     // Training loop with mini-batching and data shuffling
-    int steps_per_epoch = (N - 1) / seq_len;
     // Prepare sequence start indices
     std::vector<int> starts;
     for (int s = 0; s + seq_len < N; s += seq_len) {
@@ -554,18 +653,13 @@ int main(int argc, char** argv) {
                 // AD forward
                 auto embed_ad = ad_embed.forward(input_ids);
                 auto pos_ad   = ad_posenc.forward(seq_len);
-                // Debug shapes
-                std::cout << "DEBUG: embed shape: [" << embed_ad->val.rows
-                          << "x" << embed_ad->val.cols << "]\n";
-                std::cout << "DEBUG: pos shape:   [" << pos_ad->val.rows
-                          << "x" << pos_ad->val.cols << "]\n";
-
                 auto x_ad     = add(embed_ad, pos_ad);
                 // Time the transformer forward pass
                 std::shared_ptr<ADTensor> h_ad;
+                std::shared_ptr<ADTensor> moe_aux_loss;
                 {
                     Timer t("ADTransformer forward");
-                    h_ad = ad_transformer.forward(x_ad);
+                    h_ad = ad_transformer.forward(x_ad, use_moe ? &moe_aux_loss : nullptr);
                 }
                 // Compute logits via tied embedding weights
                 auto Wt = transpose(W_embed);  // [vocab_size x embed_dim]
@@ -577,7 +671,7 @@ int main(int argc, char** argv) {
                 auto b_mat = matmul(b_lm, ones_bias);  // [vocab_size x seq_len]
                 logits_ad = add(logits_ad, b_mat);
                 // Build target one-hot [vocab x seq_len]
-                int V = tokenizer.vocab_size();
+                int V = (int)tokenizer.vocab_size();
                 Tensor target_tensor(V, seq_len);
                 target_tensor.data.assign(V * seq_len, 0.0f);
                 for (int t = 0; t < seq_len; ++t) {
@@ -587,21 +681,43 @@ int main(int argc, char** argv) {
                     }
                 }
                 auto target_ad = make_ad(target_tensor);
-                // Cross-entropy loss via AD:
+                // Cross-entropy loss via AD (log-sum-exp trick for numerical stability):
                 // sum1 = sum(logits * target)  (sum of true class logits)
                 auto prod_ad = mul(logits_ad, target_ad);
                 auto sum1_ad = sum(prod_ad);
-                // denom: sum_exp per column
+                // Compute column-wise max from forward values (constant, no gradient)
+                Tensor max_per_col(1, seq_len);
+                for (int col = 0; col < seq_len; ++col) {
+                    float mx = logits_ad->val.data[0 * seq_len + col];
+                    for (int row = 1; row < V; ++row) {
+                        mx = std::max(mx, logits_ad->val.data[row * seq_len + col]);
+                    }
+                    max_per_col.data[col] = mx;
+                }
+                // Broadcast max to [V x seq_len] and subtract for stability
+                Tensor ones_col_v(V, 1);
+                ones_col_v.data.assign(V, 1.0f);
+                auto ones_col_ad = make_ad(ones_col_v);
+                auto max_ad = make_ad(max_per_col);  // [1 x seq_len]
+                auto max_broadcast = matmul(ones_col_ad, max_ad);  // [V x seq_len]
+                auto shifted_logits = sub(logits_ad, max_broadcast);
+                // denom: sum_exp per column (now numerically stable)
                 Tensor ones_row_t(1, V);
                 ones_row_t.data.assign(V, 1.0f);
                 auto ones_row = make_ad(ones_row_t);
-                auto exp_ad_logits = exp_ad(logits_ad);
-                auto denom_row = matmul(ones_row, exp_ad_logits);    // [1 x seq_len]
-                // log denom per column
+                auto exp_shifted = exp_ad(shifted_logits);
+                auto denom_row = matmul(ones_row, exp_shifted);    // [1 x seq_len]
+                // log denom per column + add back max
                 auto log_denoms = log_ad(denom_row);                // [1 x seq_len]
-                auto sum2_ad = sum(log_denoms);
-                // loss = sum(log_denoms) - sum(true_logits)
+                auto log_sum_exp = add(log_denoms, max_ad);         // [1 x seq_len]
+                auto sum2_ad = sum(log_sum_exp);
+                // loss = sum(log_sum_exp) - sum(true_logits)
                 auto loss_ad = sub(sum2_ad, sum1_ad);
+                // Add MoE auxiliary loss if enabled
+                if (use_moe && moe_aux_loss) {
+                    auto weighted_aux = scalar_mul(moe_aux_loss, moe_aux_weight);
+                    loss_ad = add(loss_ad, weighted_aux);
+                }
                 // Backward (accumulate gradients)
                 loss_ad->backward();
                 // Accumulate loss
@@ -646,7 +762,7 @@ int main(int argc, char** argv) {
                 auto b_mat_v = matmul(b_lm, ones_row_v);  // [vocab_size x seq_len]
                 logits_v = add(logits_v, b_mat_v);
                 // Compute cross-entropy per time step
-                int V = tokenizer.vocab_size();
+                int V = (int)tokenizer.vocab_size();
                 std::vector<float> temp_grad(V);
                 for (int t = 0; t < seq_len; ++t) {
                     std::vector<float> logit_t(V);

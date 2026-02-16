@@ -15,15 +15,16 @@ Linear::Linear(int input_size, int output_size)
 }
 
 Tensor Linear::forward(const Tensor& input) const {
-    assert(input.cols == 1 && "Linear layer expects column vector");
     assert(input.rows == weights.cols && "Input dimension mismatch");
-    
+
     Tensor output = weights.matmul(input);
-    
-    // Add bias
+
+    // Add bias (broadcast across columns)
     for (int i = 0; i < output.rows; ++i) {
-        output.data[i] += bias.data[i];
+        for (int j = 0; j < output.cols; ++j) {
+            output.data[i * output.cols + j] += bias.data[i];
+        }
     }
-    
+
     return output;
 }

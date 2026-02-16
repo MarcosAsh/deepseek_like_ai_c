@@ -1,8 +1,9 @@
-#include "../include/tokenizer.hpp"
+#include "tokenizer.hpp"
 #include <algorithm>
 #include <sstream>
 #include <stdexcept>
 #include <climits>
+#include <iostream>
 
 Tokenizer::Tokenizer(const std::string& vocab_file, const std::string& bpe_codes_file) {
     load_vocab(vocab_file);
@@ -70,8 +71,10 @@ std::vector<int> Tokenizer::encode(const std::string& text) const {
                 tokens.push_back(id);
             } else if (unk_id >= 0) {
                 tokens.push_back(unk_id);
+            } else {
+                std::cerr << "Warning: dropping unknown token '" << piece
+                          << "' (no <unk> in vocabulary)\n";
             }
-            // otherwise skip unknown piece
         }
     }
     return tokens;

@@ -4,7 +4,6 @@
 // AD-aware position-wise Feed-Forward network with GELU activation
 class ADFeedForward {
 public:
-    // embed_dim: model dimension; hidden_dim: inner FF dimension
     ADFeedForward(int embed_dim, int hidden_dim);
     // Forward: x [embed_dim x seq_len] -> y [embed_dim x seq_len]
     std::shared_ptr<ADTensor> forward(const std::shared_ptr<ADTensor>& x);
@@ -12,4 +11,8 @@ public:
 private:
     std::shared_ptr<ADTensor> W1, b1;
     std::shared_ptr<ADTensor> W2, b2;
+    // Cached ones tensors for bias broadcast
+    mutable Tensor cached_ones1{1, 1};
+    mutable Tensor cached_ones2{1, 1};
+    mutable int cached_seq_len = -1;
 };

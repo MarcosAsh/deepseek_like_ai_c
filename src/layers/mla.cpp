@@ -1,6 +1,5 @@
 #include "layers/mla.hpp"
 #include <cmath>
-#include <iostream>
 
 MLA::MLA(int input_dim, int hidden_dim, int n_heads, int compress_dim)
     : d_in(input_dim), d_hidden(hidden_dim), n_heads(n_heads), d_compress(compress_dim),
@@ -17,8 +16,6 @@ MLA::MLA(int input_dim, int hidden_dim, int n_heads, int compress_dim)
 }
 
 Tensor MLA::forward(const Tensor& input) {
-    std::cout << "Running MLA forward\n";
-
     // Project input to latent: c_KV = W_dkv * h
     Tensor c_kv = W_dkv.matmul(input);
 
@@ -39,7 +36,6 @@ Tensor MLA::forward(const Tensor& input) {
         attention_out.data[i] = alpha * value.data[i];
 
     // Final projection
-    Tensor final = W_o.matmul(attention_out);
-    final.print("MLA output");
-    return final;
+    Tensor result = W_o.matmul(attention_out);
+    return result;
 }

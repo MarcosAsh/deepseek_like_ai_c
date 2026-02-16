@@ -9,9 +9,9 @@ public:
     // dropout_prob: probability of dropping activations between layers
     FeedForward(int embed_dim, int hidden_dim, float dropout_prob = 0.0f);
     // input: [embed_dim x seq_len], returns [embed_dim x seq_len]
-    Tensor forward(const Tensor& input) const;
+    // training: apply dropout when true (default false for inference)
+    Tensor forward(const Tensor& input, bool training = false) const;
 
-private:
     // inner linear layers
     Linear fc1;
     Linear fc2;

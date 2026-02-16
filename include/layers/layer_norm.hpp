@@ -9,7 +9,6 @@ public:
     // input: [dim x seq_len], returns normalized tensor of same shape
     Tensor forward(const Tensor& input) const;
 
-private:
     int dim;
     float eps;
     Tensor gamma; // [dim x 1]

@@ -81,6 +81,33 @@ if(APPLE)
 endif()
 add_test(NAME loss_test COMMAND loss_test)
   
+# AD attention test
+add_executable(ad_attention_test test/ad_attention_test.cpp ${LIB_SOURCES})
+target_include_directories(ad_attention_test PRIVATE include)
+if(APPLE)
+  target_compile_definitions(ad_attention_test PRIVATE USE_ACCELERATE)
+  target_link_libraries(ad_attention_test PRIVATE "-framework Accelerate")
+endif()
+add_test(NAME ad_attention_test COMMAND ad_attention_test)
+
+# Feed-forward test
+add_executable(feed_forward_test test/feed_forward_test.cpp ${LIB_SOURCES})
+target_include_directories(feed_forward_test PRIVATE include)
+if(APPLE)
+  target_compile_definitions(feed_forward_test PRIVATE USE_ACCELERATE)
+  target_link_libraries(feed_forward_test PRIVATE "-framework Accelerate")
+endif()
+add_test(NAME feed_forward_test COMMAND feed_forward_test)
+
+# Quantization test
+add_executable(quantization_test test/quantization_test.cpp ${LIB_SOURCES})
+target_include_directories(quantization_test PRIVATE include)
+if(APPLE)
+  target_compile_definitions(quantization_test PRIVATE USE_ACCELERATE)
+  target_link_libraries(quantization_test PRIVATE "-framework Accelerate")
+endif()
+add_test(NAME quantization_test COMMAND quantization_test)
+
 # BPE training tool
 add_executable(train_bpe src/train_bpe.cpp)
 target_include_directories(train_bpe PRIVATE include)

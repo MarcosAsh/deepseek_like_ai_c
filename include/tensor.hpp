@@ -7,9 +7,9 @@
 
 class Tensor {
 public:
+    int rows, cols;
     // Tensor data stored via unified memory allocator (on-chip pool or host fallback)
     std::vector<float, UnifiedMemoryAllocator<float>> data;
-    int rows, cols;
 
     Tensor(int r, int c);
     Tensor(int size);

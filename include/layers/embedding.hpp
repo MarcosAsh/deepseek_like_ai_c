@@ -11,6 +11,5 @@ public:
     // Forward pass: tokens -> [embed_dim x seq_len] tensor
     Tensor forward(const std::vector<int>& tokens) const;
 
-private:
     Tensor weights; // [embed_dim x vocab_size]
 };

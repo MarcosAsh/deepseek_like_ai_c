@@ -2,28 +2,32 @@
 #include <cstdlib>
 #include <stdexcept>
 
-// Retrieve singleton instance
+// Retrieve singleton instance (intentionally leaked to avoid static destruction order issues:
+// other statics like the AD parameter registry may outlive this singleton and still
+// need to deallocate through it during program exit)
 UnifiedMemoryManager& UnifiedMemoryManager::instance() {
-    static UnifiedMemoryManager inst;
-    return inst;
+    static auto* inst = new UnifiedMemoryManager();
+    return *inst;
 }
 
 UnifiedMemoryManager::UnifiedMemoryManager() = default;
 
 UnifiedMemoryManager::~UnifiedMemoryManager() {
     std::lock_guard<std::mutex> lock(mu_);
-    if (pool_) {
-        std::free(pool_);
-        pool_ = nullptr;
-    }
-    // Free any remaining fallback allocations (if any)
+    // Free any remaining fallback (heap) allocations before freeing the pool
     for (auto& kv : allocations_) {
         void* ptr = kv.first;
-        if (!(ptr >= pool_ && ptr < pool_ + max_on_chip_)) {
+        bool is_pool = pool_ && (ptr >= pool_ && ptr < pool_ + max_on_chip_);
+        if (!is_pool) {
             std::free(ptr);
         }
     }
     allocations_.clear();
+    // Now free the pool itself
+    if (pool_) {
+        std::free(pool_);
+        pool_ = nullptr;
+    }
 }
 
 void UnifiedMemoryManager::init(std::size_t max_on_chip_bytes) {
@@ -58,14 +62,12 @@ void UnifiedMemoryManager::deallocate(void* ptr, std::size_t /*bytes*/) {
     auto it = allocations_.find(ptr);
     if (it != allocations_.end()) {
         bool is_pool = pool_ && (ptr >= pool_ && ptr < pool_ + max_on_chip_);
-        if (is_pool) {
-            allocated_on_chip_ -= it->second;
-        } else {
+        if (!is_pool) {
+            // Only free heap (fallback) allocations; pool memory uses a bump
+            // allocator and cannot reclaim interior blocks — it is reclaimed
+            // only when the entire pool is freed.
             std::free(ptr);
         }
         allocations_.erase(it);
-    } else {
-        // Unknown pointer, free for safety
-        std::free(ptr);
     }
 }
