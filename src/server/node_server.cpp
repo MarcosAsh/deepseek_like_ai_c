@@ -156,7 +156,7 @@ json NodeServer::get_presets() {
             {{"id", "text_in"}, {"type", "TextInput"}, {"config", {{"text", "Hello world"}}}},
             {{"id", "tokenizer"}, {"type", "Tokenizer"}, {"config", {{"vocab_file", "input_files/vocab.txt"}}}},
             {{"id", "seq_len"}, {"type", "SeqLenExtractor"}, {"config", json::object()}},
-            {{"id", "embedding"}, {"type", "ADEmbedding"}, {"config", {{"vocab_size", 256}, {"embed_dim", 64}}}},
+            {{"id", "embedding"}, {"type", "ADEmbedding"}, {"config", {{"vocab_size", 10000}, {"embed_dim", 64}}}},
             {{"id", "pos_enc"}, {"type", "ADPositionalEncoding"}, {"config", {{"embed_dim", 64}}}},
             {{"id", "add_pe"}, {"type", "Add"}, {"config", json::object()}}
         });

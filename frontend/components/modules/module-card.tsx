@@ -11,9 +11,9 @@ export function ModuleCard({ module }: { module: ModuleCatalogEntry }) {
   return (
     <Link href={`/modules/${module.type}`}>
       <Card className="h-full hover:border-primary/50 transition-colors group cursor-pointer">
-        <CardHeader className="pb-3">
+        <CardHeader className="p-6 pb-4">
           <div className="flex items-start justify-between gap-2">
-            <CardTitle className="text-base font-semibold">
+            <CardTitle className="text-lg font-semibold">
               {module.type}
             </CardTitle>
             <Badge
@@ -23,17 +23,17 @@ export function ModuleCard({ module }: { module: ModuleCatalogEntry }) {
               {module.category}
             </Badge>
           </div>
-          <p className="text-sm text-muted-foreground line-clamp-2">
+          <p className="text-sm text-muted-foreground line-clamp-2 leading-relaxed mt-1">
             {module.description}
           </p>
         </CardHeader>
-        <CardContent className="pt-0">
+        <CardContent className="px-6 pb-6 pt-0">
           {module.inputs.length > 0 && (
-            <div className="mb-2">
+            <div className="mb-3">
               <span className="text-xs text-muted-foreground font-medium">
                 Inputs:
               </span>
-              <div className="flex flex-wrap gap-1 mt-1">
+              <div className="flex flex-wrap gap-1.5 mt-1.5">
                 {module.inputs.map((port) => (
                   <PortBadge
                     key={port.name}
@@ -46,11 +46,11 @@ export function ModuleCard({ module }: { module: ModuleCatalogEntry }) {
             </div>
           )}
           {module.outputs.length > 0 && (
-            <div className="mb-2">
+            <div className="mb-3">
               <span className="text-xs text-muted-foreground font-medium">
                 Outputs:
               </span>
-              <div className="flex flex-wrap gap-1 mt-1">
+              <div className="flex flex-wrap gap-1.5 mt-1.5">
                 {module.outputs.map((port) => (
                   <PortBadge
                     key={port.name}
@@ -62,9 +62,9 @@ export function ModuleCard({ module }: { module: ModuleCatalogEntry }) {
               </div>
             </div>
           )}
-          <div className="flex items-center gap-1 text-xs text-muted-foreground group-hover:text-primary transition-colors mt-3">
+          <div className="flex items-center gap-1 text-sm text-muted-foreground group-hover:text-primary transition-colors mt-4">
             <span>Explore</span>
-            <ArrowRight className="h-3 w-3" />
+            <ArrowRight className="h-3.5 w-3.5" />
           </div>
         </CardContent>
       </Card>

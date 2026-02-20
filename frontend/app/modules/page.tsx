@@ -83,7 +83,7 @@ export default function ModulesPage() {
               categories={categories}
             />
           </div>
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+          <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
             {filtered.map((module) => (
               <ModuleCard key={module.type} module={module} />
             ))}
