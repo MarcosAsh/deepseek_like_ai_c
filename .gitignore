@@ -1,3 +1,10 @@
 /.DS_Store
 /.vscode
 /build
+
+# Frontend
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/.env.local
+frontend/public/source/

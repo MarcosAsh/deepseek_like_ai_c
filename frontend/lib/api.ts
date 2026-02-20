@@ -1,0 +1,60 @@
+import type {
+  ModulesResponse,
+  ExecuteNodeRequest,
+  ExecuteNodeResponse,
+  GraphDef,
+  GraphResult,
+  PresetsResponse,
+  HealthResponse,
+} from "./types";
+
+const API_URL =
+  process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
+
+async function fetchAPI<T>(
+  path: string,
+  options?: RequestInit
+): Promise<T> {
+  const res = await fetch(`${API_URL}${path}`, {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options?.headers,
+    },
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`API error ${res.status}: ${text}`);
+  }
+  return res.json();
+}
+
+export async function fetchHealth(): Promise<HealthResponse> {
+  return fetchAPI<HealthResponse>("/api/v1/health");
+}
+
+export async function fetchModules(): Promise<ModulesResponse> {
+  return fetchAPI<ModulesResponse>("/api/v1/modules");
+}
+
+export async function executeNode(
+  req: ExecuteNodeRequest
+): Promise<ExecuteNodeResponse> {
+  return fetchAPI<ExecuteNodeResponse>("/api/v1/execute_node", {
+    method: "POST",
+    body: JSON.stringify(req),
+  });
+}
+
+export async function executeGraph(
+  graph: GraphDef
+): Promise<GraphResult> {
+  return fetchAPI<GraphResult>("/api/v1/execute", {
+    method: "POST",
+    body: JSON.stringify(graph),
+  });
+}
+
+export async function fetchPresets(): Promise<PresetsResponse> {
+  return fetchAPI<PresetsResponse>("/api/v1/presets");
+}
