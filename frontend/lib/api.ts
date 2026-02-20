@@ -4,9 +4,11 @@ import type {
   ExecuteNodeResponse,
   GraphDef,
   GraphResult,
+  GraphResultRaw,
   PresetsResponse,
   HealthResponse,
 } from "./types";
+import { normalizeGraphResult } from "./types";
 
 const API_URL =
   process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
@@ -49,10 +51,11 @@ export async function executeNode(
 export async function executeGraph(
   graph: GraphDef
 ): Promise<GraphResult> {
-  return fetchAPI<GraphResult>("/api/v1/execute", {
+  const raw = await fetchAPI<GraphResultRaw>("/api/v1/execute", {
     method: "POST",
     body: JSON.stringify(graph),
   });
+  return normalizeGraphResult(raw);
 }
 
 export async function fetchPresets(): Promise<PresetsResponse> {

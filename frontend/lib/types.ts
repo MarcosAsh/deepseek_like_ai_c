@@ -62,7 +62,7 @@ export interface GraphDef {
   edges: EdgeDef[];
 }
 
-// Execution results
+// Execution results - matches actual backend response format
 export interface NodeResult {
   node_id: string;
   node_type: string;
@@ -71,11 +71,49 @@ export interface NodeResult {
   error: string;
 }
 
+// Raw backend response: nodes keyed by id
+interface BackendNodeResult {
+  type: string;
+  execution_time_ms: number;
+  outputs: Record<string, TensorData> | null;
+  error?: string;
+}
+
+export interface GraphResultRaw {
+  nodes: Record<string, BackendNodeResult>;
+  execution_order: string[];
+  total_time_ms: number;
+  error?: string;
+}
+
+// Normalized format used by frontend
 export interface GraphResult {
   node_results: NodeResult[];
   execution_order: string[];
   total_time_ms: number;
   error: string;
+}
+
+// Convert raw backend response to normalized format
+export function normalizeGraphResult(raw: GraphResultRaw): GraphResult {
+  const node_results: NodeResult[] = [];
+  if (raw.nodes) {
+    for (const [nodeId, data] of Object.entries(raw.nodes)) {
+      node_results.push({
+        node_id: nodeId,
+        node_type: data.type,
+        execution_time_ms: data.execution_time_ms,
+        outputs: data.outputs ?? {},
+        error: data.error ?? "",
+      });
+    }
+  }
+  return {
+    node_results,
+    execution_order: raw.execution_order ?? [],
+    total_time_ms: raw.total_time_ms ?? 0,
+    error: raw.error ?? "",
+  };
 }
 
 // Single node execution

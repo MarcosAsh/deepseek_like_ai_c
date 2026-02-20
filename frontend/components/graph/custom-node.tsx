@@ -1,15 +1,16 @@
 "use client";
 
 import { memo } from "react";
-import { Position } from "@xyflow/react";
+import { Handle, Position } from "@xyflow/react";
 import type { NodeProps } from "@xyflow/react";
 import { Badge } from "@/components/ui/badge";
 import { CATEGORY_COLORS } from "@/lib/constants";
 import { cn } from "@/lib/utils";
-import { PortHandle } from "./port-handle";
+import { getPortColor } from "@/lib/port-colors";
 import { NodeOutputPreview } from "./node-output-preview";
 import { useGraphStore } from "./hooks/use-graph-store";
 import type { CustomNodeData } from "@/lib/graph-utils";
+import type { PortType } from "@/lib/types";
 
 function CustomNodeComponent({ id, data, selected }: NodeProps) {
   const nodeData = data as unknown as CustomNodeData;
@@ -40,21 +41,24 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
         </Badge>
       </div>
 
-      {/* Port labels */}
+      {/* Port labels - each port row has its handle inline */}
       <div className="px-4 py-3 flex justify-between gap-6">
         {/* Input ports */}
         <div className="space-y-2">
-          {nodeData.inputs.map((port, i) => (
-            <div key={port.name} className="flex items-center gap-1.5 relative">
-              <PortHandle
+          {nodeData.inputs.map((port) => (
+            <div key={port.name} className="flex items-center gap-1.5 relative h-5">
+              <Handle
                 type="target"
-                portType={port.type}
-                portName={port.name}
                 position={Position.Left}
+                id={port.name}
+                className="!absolute !-left-[22px] !top-1/2 !-translate-y-1/2"
                 style={{
-                  top: `${32 + i * 28}px`,
-                  left: -6,
+                  width: 10,
+                  height: 10,
+                  backgroundColor: getPortColor(port.type as PortType),
+                  border: "2px solid var(--background)",
                 }}
+                title={`${port.name} (${port.type})`}
               />
               <span className="text-[11px] font-mono text-muted-foreground">
                 {port.name}
@@ -65,23 +69,26 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
 
         {/* Output ports */}
         <div className="space-y-2 text-right">
-          {nodeData.outputs.map((port, i) => (
+          {nodeData.outputs.map((port) => (
             <div
               key={port.name}
-              className="flex items-center gap-1.5 justify-end relative"
+              className="flex items-center gap-1.5 justify-end relative h-5"
             >
               <span className="text-[11px] font-mono text-muted-foreground">
                 {port.name}
               </span>
-              <PortHandle
+              <Handle
                 type="source"
-                portType={port.type}
-                portName={port.name}
                 position={Position.Right}
+                id={port.name}
+                className="!absolute !-right-[22px] !top-1/2 !-translate-y-1/2"
                 style={{
-                  top: `${32 + i * 28}px`,
-                  right: -6,
+                  width: 10,
+                  height: 10,
+                  backgroundColor: getPortColor(port.type as PortType),
+                  border: "2px solid var(--background)",
                 }}
+                title={`${port.name} (${port.type})`}
               />
             </div>
           ))}

@@ -9,8 +9,20 @@ import { MODULE_DOCS } from "@/lib/module-docs";
 import { ModuleDetailHeader } from "@/components/modules/module-detail-header";
 import { ModuleExecutor } from "@/components/modules/module-executor";
 import { CodeViewer } from "@/components/code/code-viewer";
+import { CodeEditor } from "@/components/code/code-editor";
+import { CodeEditorToolbar } from "@/components/code/code-editor-toolbar";
+import { CodeDiffViewer } from "@/components/code/code-diff-viewer";
+import { CompilationOutput } from "@/components/code/compilation-output";
+import { useCodeState } from "@/hooks/use-code-state";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Select,
@@ -19,6 +31,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Pencil, Eye, GitCompare } from "lucide-react";
 
 export default function ModuleDetailPage() {
   const params = useParams<{ type: string }>();
@@ -39,13 +52,20 @@ export default function ModuleDetailPage() {
   const [selectedFile, setSelectedFile] = useState(allFiles[0] || "");
   const [sourceCode, setSourceCode] = useState<string>("");
   const [sourceLoading, setSourceLoading] = useState(false);
+  const [editMode, setEditMode] = useState(false);
+  const [diffOpen, setDiffOpen] = useState(false);
+
+  const codeState = useCodeState(sourceCode);
 
   useEffect(() => {
     if (!selectedFile) return;
     setSourceLoading(true);
+    setEditMode(false);
     fetch(getSourceUrl(selectedFile))
       .then((res) => (res.ok ? res.text() : "// Source file not available"))
-      .then(setSourceCode)
+      .then((code) => {
+        setSourceCode(code);
+      })
       .catch(() => setSourceCode("// Failed to load source"))
       .finally(() => setSourceLoading(false));
   }, [selectedFile]);
@@ -99,37 +119,113 @@ export default function ModuleDetailPage() {
 
         <TabsContent value="code" className="mt-4">
           <div className="space-y-3">
-            {allFiles.length > 1 && (
-              <Select value={selectedFile} onValueChange={setSelectedFile}>
-                <SelectTrigger className="w-80 font-mono text-sm">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {allFiles.map((f) => (
-                    <SelectItem key={f} value={f} className="font-mono text-sm">
-                      {f}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+            <div className="flex items-center gap-3 flex-wrap">
+              {allFiles.length > 1 && (
+                <Select value={selectedFile} onValueChange={setSelectedFile}>
+                  <SelectTrigger className="w-80 font-mono text-sm">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {allFiles.map((f) => (
+                      <SelectItem key={f} value={f} className="font-mono text-sm">
+                        {f}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+              {allFiles.length === 1 && (
+                <p className="text-sm font-mono text-muted-foreground">
+                  {allFiles[0]}
+                </p>
+              )}
+              <div className="flex items-center gap-2 ml-auto">
+                <Button
+                  size="sm"
+                  variant={editMode ? "default" : "outline"}
+                  onClick={() => setEditMode(!editMode)}
+                >
+                  {editMode ? (
+                    <>
+                      <Eye className="h-3 w-3 mr-1" />
+                      Read Only
+                    </>
+                  ) : (
+                    <>
+                      <Pencil className="h-3 w-3 mr-1" />
+                      Edit Mode
+                    </>
+                  )}
+                </Button>
+                {codeState.isModified && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setDiffOpen(true)}
+                  >
+                    <GitCompare className="h-3 w-3 mr-1" />
+                    View Changes
+                  </Button>
+                )}
+              </div>
+            </div>
+
+            {editMode && (
+              <CodeEditorToolbar
+                onReset={codeState.reset}
+                onRun={codeState.run}
+                isRunning={codeState.isRunning}
+                isModified={codeState.isModified}
+                canRun={false}
+              />
             )}
-            {allFiles.length === 1 && (
-              <p className="text-sm font-mono text-muted-foreground">
-                {allFiles[0]}
-              </p>
-            )}
+
             {sourceLoading ? (
               <Skeleton className="h-[500px] w-full" />
             ) : (
               <div className="border rounded-lg overflow-hidden">
-                <CodeViewer
-                  code={sourceCode}
-                  language={selectedFile.endsWith(".hpp") ? "cpp" : "cpp"}
-                  height="600px"
-                />
+                {editMode ? (
+                  <CodeEditor
+                    code={codeState.code}
+                    onChange={codeState.setCode}
+                    language="cpp"
+                    height="600px"
+                  />
+                ) : (
+                  <CodeViewer
+                    code={sourceCode}
+                    language="cpp"
+                    height="600px"
+                  />
+                )}
               </div>
             )}
+
+            {editMode && (
+              <CompilationOutput
+                compilationOutput={codeState.compilationOutput}
+                executionOutput={codeState.executionOutput}
+                error={codeState.error}
+              />
+            )}
           </div>
+
+          {/* Diff viewer dialog */}
+          <Dialog open={diffOpen} onOpenChange={setDiffOpen}>
+            <DialogContent className="max-w-5xl max-h-[80vh]">
+              <DialogHeader>
+                <DialogTitle>Code Changes</DialogTitle>
+              </DialogHeader>
+              <div className="border rounded overflow-hidden">
+                <CodeDiffViewer
+                  original={sourceCode}
+                  modified={codeState.code}
+                  language="cpp"
+                  height="500px"
+                />
+              </div>
+            </DialogContent>
+          </Dialog>
         </TabsContent>
 
         <TabsContent value="docs" className="mt-4">

@@ -35,7 +35,7 @@ class TokenizerWrapper : public ModuleWrapper {
     std::string vocab_file, bpe_file;
 public:
     TokenizerWrapper(const json& config) {
-        vocab_file = config.value("vocab_file", "vocab.txt");
+        vocab_file = config.value("vocab_file", "input_files/vocab.txt");
         bpe_file = config.value("bpe_codes", "");
     }
 
@@ -51,7 +51,7 @@ public:
         return {{"tokens", PortType::TOKEN_IDS}};
     }
     json default_config() const override {
-        return {{"vocab_file", "vocab.txt"}, {"bpe_codes", ""}};
+        return {{"vocab_file", "input_files/vocab.txt"}, {"bpe_codes", ""}};
     }
 
     std::unordered_map<std::string, PortValue> execute(

@@ -7,6 +7,7 @@ import { TensorDataTable } from "./tensor-data-table";
 import { TokenDisplay } from "./token-display";
 import { GradientOverlay } from "./gradient-overlay";
 import { TensorShapeBadge } from "./tensor-shape-badge";
+import { AttentionPattern } from "./attention-pattern";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 export function PortValueRenderer({ data }: { data: TensorData }) {
@@ -49,7 +50,7 @@ export function PortValueRenderer({ data }: { data: TensorData }) {
     data.shape &&
     data.data
   ) {
-    const totalElements = data.shape[0] * data.shape[1];
+    const isSquare = data.shape[0] === data.shape[1];
 
     return (
       <div className="space-y-3">
@@ -70,6 +71,9 @@ export function PortValueRenderer({ data }: { data: TensorData }) {
           <TabsList>
             <TabsTrigger value="heatmap">Heatmap</TabsTrigger>
             <TabsTrigger value="table">Table</TabsTrigger>
+            {isSquare && (
+              <TabsTrigger value="attention">Attention</TabsTrigger>
+            )}
           </TabsList>
           <TabsContent value="heatmap" className="mt-2">
             <TensorHeatmap
@@ -82,6 +86,15 @@ export function PortValueRenderer({ data }: { data: TensorData }) {
           <TabsContent value="table" className="mt-2">
             <TensorDataTable data={data.data} shape={data.shape} />
           </TabsContent>
+          {isSquare && (
+            <TabsContent value="attention" className="mt-2">
+              <AttentionPattern
+                data={data.data}
+                shape={data.shape}
+                stats={data.stats}
+              />
+            </TabsContent>
+          )}
         </Tabs>
 
         {/* Gradient overlay for AD_TENSOR */}

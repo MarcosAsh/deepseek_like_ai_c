@@ -173,15 +173,15 @@ export const useGraphStore = create<GraphState>((set, get) => ({
   addExecutionSnapshot: (result: GraphResult) =>
     set((state) => {
       const resultsMap = new Map<string, NodeResult>();
-      for (const nr of result.node_results) {
+      for (const nr of result.node_results ?? []) {
         resultsMap.set(nr.node_id, nr);
       }
       const snapshot: ExecutionSnapshot = {
         id: `exec_${Date.now()}`,
         timestamp: Date.now(),
         nodeResults: resultsMap,
-        totalTimeMs: result.total_time_ms,
-        executionOrder: result.execution_order,
+        totalTimeMs: result.total_time_ms ?? 0,
+        executionOrder: result.execution_order ?? [],
       };
       return {
         executionHistory: [

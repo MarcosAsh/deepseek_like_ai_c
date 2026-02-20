@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { Suspense, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
 import { GraphEditor } from "@/components/graph/graph-editor";
 import { useGraphStore } from "@/components/graph/hooks/use-graph-store";
@@ -10,11 +10,10 @@ import { Monitor } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 
-export default function GraphPage() {
+function GraphLoader() {
   const searchParams = useSearchParams();
   const { setNodes, setEdges } = useGraphStore();
 
-  // Load shared graph from URL
   useEffect(() => {
     const graphParam = searchParams.get("g");
     if (!graphParam) return;
@@ -48,8 +47,16 @@ export default function GraphPage() {
     loadShared();
   }, [searchParams, setNodes, setEdges]);
 
+  return null;
+}
+
+export default function GraphPage() {
   return (
     <>
+      <Suspense fallback={null}>
+        <GraphLoader />
+      </Suspense>
+
       {/* Desktop: show graph editor */}
       <div className="hidden md:block h-full">
         <GraphEditor />

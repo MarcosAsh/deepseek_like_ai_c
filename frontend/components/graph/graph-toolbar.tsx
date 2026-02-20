@@ -13,8 +13,10 @@ import {
   Redo2,
   History,
   Share2,
+  Bug,
 } from "lucide-react";
 import { ExecutionHistory } from "./execution-history";
+import { ExecutionDebugger } from "./execution-debugger";
 import { toast } from "sonner";
 
 interface GraphToolbarProps {
@@ -35,6 +37,7 @@ export function GraphToolbar({ onLoadPreset }: GraphToolbarProps) {
   } = useGraphStore();
   const { execute } = useGraphExecution();
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [debuggerOpen, setDebuggerOpen] = useState(false);
 
   function handleExport() {
     const data = JSON.stringify(
@@ -131,6 +134,14 @@ export function GraphToolbar({ onLoadPreset }: GraphToolbarProps) {
       <Button
         size="sm"
         variant="ghost"
+        onClick={() => setDebuggerOpen(true)}
+        title="Step-by-step Debugger"
+      >
+        <Bug className="h-3.5 w-3.5" />
+      </Button>
+      <Button
+        size="sm"
+        variant="ghost"
         onClick={() => setHistoryOpen(true)}
         title="Execution History"
       >
@@ -152,6 +163,7 @@ export function GraphToolbar({ onLoadPreset }: GraphToolbarProps) {
       </Button>
 
       <ExecutionHistory open={historyOpen} onOpenChange={setHistoryOpen} />
+      <ExecutionDebugger open={debuggerOpen} onOpenChange={setDebuggerOpen} />
     </div>
   );
 }

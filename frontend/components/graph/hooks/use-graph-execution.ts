@@ -37,36 +37,59 @@ export function useGraphExecution() {
         return;
       }
 
+      const nodeResults = result.node_results ?? [];
+      const executionOrder = result.execution_order ?? [];
+
+      if (nodeResults.length === 0) {
+        toast.warning("Graph executed but returned no results");
+        return;
+      }
+
       // Animate through execution order step by step
       const resultsMap = new Map<string, NodeResult>();
-      for (const nodeId of result.execution_order) {
+      for (const nodeId of executionOrder) {
         setExecutingNodeId(nodeId);
-        const nr = result.node_results.find((r) => r.node_id === nodeId);
+        const nr = nodeResults.find((r) => r.node_id === nodeId);
         if (nr) {
           resultsMap.set(nr.node_id, nr);
           setResults(new Map(resultsMap));
         }
-        await delay(200); // Brief pause for visual feedback
+        await delay(200);
       }
       setExecutingNodeId(null);
+
+      // Also add any results not in execution order
+      for (const nr of nodeResults) {
+        if (!resultsMap.has(nr.node_id)) {
+          resultsMap.set(nr.node_id, nr);
+        }
+      }
+      setResults(new Map(resultsMap));
 
       // Save to execution history
       addExecutionSnapshot(result);
 
       // Rich toast with stats
-      const nodeCount = result.node_results.length;
-      const slowest = result.node_results.reduce(
-        (max, nr) =>
-          nr.execution_time_ms > max.execution_time_ms ? nr : max,
-        result.node_results[0]
-      );
-      const errorCount = result.node_results.filter((nr) => nr.error).length;
+      const nodeCount = nodeResults.length;
+      const errorCount = nodeResults.filter((nr) => nr.error).length;
 
-      toast.success(`Executed ${nodeCount} nodes in ${result.total_time_ms.toFixed(1)}ms`, {
-        description: errorCount > 0
-          ? `${errorCount} node(s) had errors`
-          : `Slowest: ${slowest.node_type} (${slowest.execution_time_ms.toFixed(1)}ms)`,
-      });
+      if (nodeCount > 0) {
+        const slowest = nodeResults.reduce(
+          (max, nr) =>
+            nr.execution_time_ms > max.execution_time_ms ? nr : max,
+          nodeResults[0]
+        );
+
+        toast.success(
+          `Executed ${nodeCount} nodes in ${result.total_time_ms?.toFixed(1) ?? "?"}ms`,
+          {
+            description:
+              errorCount > 0
+                ? `${errorCount} node(s) had errors`
+                : `Slowest: ${slowest.node_type} (${slowest.execution_time_ms.toFixed(1)}ms)`,
+          }
+        );
+      }
     } catch (err) {
       toast.error(
         err instanceof Error ? err.message : "Execution failed"
