@@ -9,6 +9,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { useGraphStore } from "./hooks/use-graph-store";
 import { fromGraphDef } from "@/lib/graph-utils";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -46,25 +47,30 @@ export function PresetLoader({ open, onOpenChange }: PresetLoaderProps) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-w-2xl">
         <DialogHeader>
           <DialogTitle>Load Preset Graph</DialogTitle>
         </DialogHeader>
-        <div className="space-y-2 mt-2">
+        <div className="space-y-3 mt-2">
           {presetsLoading ? (
             Array.from({ length: 3 }).map((_, i) => (
-              <Skeleton key={i} className="h-16 w-full" />
+              <Skeleton key={i} className="h-20 w-full" />
             ))
           ) : (
             presetsData?.presets.map((preset, i) => (
               <Button
                 key={i}
                 variant="outline"
-                className="w-full h-auto py-3 flex flex-col items-start text-left"
+                className="w-full h-auto py-4 px-5 flex flex-col items-start text-left gap-1.5"
                 onClick={() => handleSelect(i)}
               >
-                <span className="font-semibold">{preset.name}</span>
-                <span className="text-xs text-muted-foreground font-normal">
+                <div className="flex items-center gap-2">
+                  <span className="font-semibold text-base">{preset.name}</span>
+                  <Badge variant="secondary" className="text-[10px]">
+                    {preset.nodes.length} nodes
+                  </Badge>
+                </div>
+                <span className="text-sm text-muted-foreground font-normal leading-relaxed">
                   {preset.description}
                 </span>
               </Button>
