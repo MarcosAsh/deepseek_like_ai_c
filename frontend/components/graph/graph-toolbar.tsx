@@ -70,6 +70,70 @@ export function GraphToolbar({ onLoadPreset }: GraphToolbarProps) {
     URL.revokeObjectURL(url);
   }
 
+  function formatTensorData(shape: number[], data: number[]): string {
+    if (shape.length === 2) {
+      const [rows, cols] = shape;
+      const lines: string[] = [];
+      for (let r = 0; r < rows; r++) {
+        const row = data.slice(r * cols, (r + 1) * cols);
+        lines.push("    [" + row.map((v) => v.toFixed(4).padStart(9)).join(", ") + "]");
+      }
+      return "  [\n" + lines.join(",\n") + "\n  ]";
+    }
+    return "  [" + data.map((v) => v.toFixed(4)).join(", ") + "]";
+  }
+
+  function formatPortOutput(portName: string, data: Record<string, unknown>): string[] {
+    const lines: string[] = [];
+    const d = data as {
+      type?: string;
+      shape?: number[];
+      data?: number[];
+      value?: unknown;
+      stats?: { min: number; max: number; mean: number; std: number };
+      truncated?: boolean;
+      grad?: { shape: number[]; data: number[]; stats: { min: number; max: number; mean: number; std: number } };
+    };
+    const type = d.type ?? "unknown";
+
+    if (type === "TENSOR" || type === "AD_TENSOR") {
+      const shapeStr = d.shape ? `[${d.shape.join("x")}]` : "[]";
+      lines.push(`  ${portName}: ${type} ${shapeStr}`);
+      if (d.stats) {
+        lines.push(`    stats: min=${d.stats.min.toFixed(4)}, max=${d.stats.max.toFixed(4)}, mean=${d.stats.mean.toFixed(4)}, std=${d.stats.std.toFixed(4)}`);
+      }
+      if (d.data && d.shape) {
+        lines.push(`    data:`);
+        lines.push(formatTensorData(d.shape, d.data));
+      }
+      if (d.truncated) {
+        lines.push(`    (data truncated)`);
+      }
+      if (d.grad && d.grad.data) {
+        lines.push(`    gradient: [${d.grad.shape.join("x")}]`);
+        if (d.grad.stats) {
+          lines.push(`    grad stats: min=${d.grad.stats.min.toFixed(4)}, max=${d.grad.stats.max.toFixed(4)}, mean=${d.grad.stats.mean.toFixed(4)}, std=${d.grad.stats.std.toFixed(4)}`);
+        }
+        lines.push(`    grad data:`);
+        lines.push(formatTensorData(d.grad.shape, d.grad.data));
+      }
+    } else if (type === "TOKEN_IDS") {
+      const tokens = Array.isArray(d.value) ? d.value : [];
+      lines.push(`  ${portName}: ${type} (${tokens.length} tokens)`);
+      lines.push(`    [${tokens.join(", ")}]`);
+    } else if (type === "TEXT") {
+      lines.push(`  ${portName}: ${type}`);
+      lines.push(`    "${String(d.value ?? "")}"`);
+    } else if (type === "SCALAR") {
+      lines.push(`  ${portName}: ${type} = ${Number(d.value).toFixed(6)}`);
+    } else if (type === "INT") {
+      lines.push(`  ${portName}: ${type} = ${d.value}`);
+    } else {
+      lines.push(`  ${portName}: ${type} = ${JSON.stringify(d.value)}`);
+    }
+    return lines;
+  }
+
   function handleExportLogs() {
     const lines: string[] = [];
     lines.push("=== LLMs Unlocked - Execution Log ===");
@@ -90,15 +154,7 @@ export function GraphToolbar({ onLoadPreset }: GraphToolbarProps) {
           lines.push(`  ERROR: ${result.error}`);
         } else {
           for (const [portName, data] of Object.entries(result.outputs)) {
-            const d = data as { type?: string; shape?: number[]; value?: unknown };
-            if (d.shape) {
-              lines.push(`  ${portName}: ${d.type} [${d.shape.join("x")}]`);
-            } else if (d.value !== undefined) {
-              const val = String(d.value);
-              lines.push(`  ${portName}: ${d.type} = ${val.length > 100 ? val.slice(0, 100) + "..." : val}`);
-            } else {
-              lines.push(`  ${portName}: ${d.type}`);
-            }
+            lines.push(...formatPortOutput(portName, data as unknown as Record<string, unknown>));
           }
         }
       }
@@ -118,6 +174,9 @@ export function GraphToolbar({ onLoadPreset }: GraphToolbarProps) {
             lines.push(`  [${nid}] ${nr.node_type}: ERROR - ${nr.error}`);
           } else {
             lines.push(`  [${nid}] ${nr.node_type}: ${nr.execution_time_ms.toFixed(2)}ms`);
+            for (const [portName, data] of Object.entries(nr.outputs)) {
+              lines.push(...formatPortOutput(portName, data as unknown as Record<string, unknown>));
+            }
           }
         }
       }
