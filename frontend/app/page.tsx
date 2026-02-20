@@ -58,16 +58,16 @@ export default function HomePage() {
       </section>
 
       {/* Feature Cards */}
-      <section className="grid gap-6 md:grid-cols-3 pb-20">
+      <section className="grid gap-8 md:grid-cols-3 pb-20">
         {features.map((feature) => (
           <Link key={feature.href} href={feature.href}>
             <Card className="h-full hover:border-primary/50 transition-colors group">
-              <CardHeader>
-                <feature.icon className="h-8 w-8 mb-2 text-purple-500" />
-                <CardTitle>{feature.title}</CardTitle>
+              <CardHeader className="p-8 pb-4">
+                <feature.icon className="h-10 w-10 mb-3 text-purple-500" />
+                <CardTitle className="text-xl">{feature.title}</CardTitle>
               </CardHeader>
-              <CardContent>
-                <p className="text-sm text-muted-foreground mb-4">
+              <CardContent className="px-8 pb-8">
+                <p className="text-base text-muted-foreground mb-6 leading-relaxed">
                   {feature.description}
                 </p>
                 <span className="text-sm font-medium text-primary group-hover:underline">
