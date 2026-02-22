@@ -1,5 +1,7 @@
 #include "layers/feed_forward.hpp"
+#include "layers/ad_feed_forward.hpp"
 #include "layers/linear.hpp"
+#include "autodiff.hpp"
 #include <cassert>
 #include <cmath>
 #include <iostream>
@@ -115,6 +117,63 @@ int main() {
         assert(almost_eq(out(1, 1), 12.0f));
         assert(almost_eq(out(2, 1), 16.0f));
         std::cout << "  [PASS] Linear layer batched support\n";
+    }
+
+    // Test 6: AD FeedForward forward shape
+    {
+        clear_parameters();
+        int embed_dim = 4, hidden_dim = 8;
+        ADFeedForward adff(embed_dim, hidden_dim);
+        Tensor input_t(embed_dim, 3);
+        for (auto& v : input_t.data) v = 0.5f;
+        auto input = make_ad(input_t);
+        auto out = adff.forward(input);
+        assert(out->val.rows == embed_dim);
+        assert(out->val.cols == 3);
+        std::cout << "  [PASS] AD FeedForward forward shape\n";
+    }
+
+    // Test 7: AD FeedForward backward with gradient check
+    {
+        clear_parameters();
+        int embed_dim = 3, hidden_dim = 6;
+        ADFeedForward adff(embed_dim, hidden_dim);
+        Tensor input_t(embed_dim, 1);
+        input_t.data = {0.5f, -0.3f, 0.8f};
+
+        // Analytical gradient
+        auto input = make_ad(input_t);
+        register_parameter(input);
+        auto out = adff.forward(input);
+        auto s = sum(out);
+        s->backward();
+        std::vector<float> analytical_grad(input->grad.data.begin(), input->grad.data.end());
+
+        // Finite difference gradient check
+        float eps = 1e-3f;
+        for (int i = 0; i < embed_dim; ++i) {
+            clear_parameters();
+            Tensor inp_plus(embed_dim, 1);
+            inp_plus.data = input_t.data;
+            inp_plus.data[i] += eps;
+            auto ap = make_ad(inp_plus);
+            auto op = adff.forward(ap);
+            auto sp = sum(op);
+            float f_plus = sp->val.data[0];
+
+            clear_parameters();
+            Tensor inp_minus(embed_dim, 1);
+            inp_minus.data = input_t.data;
+            inp_minus.data[i] -= eps;
+            auto am = make_ad(inp_minus);
+            auto om = adff.forward(am);
+            auto sm = sum(om);
+            float f_minus = sm->val.data[0];
+
+            float numerical = (f_plus - f_minus) / (2.0f * eps);
+            assert(almost_eq(analytical_grad[i], numerical, 0.1f));
+        }
+        std::cout << "  [PASS] AD FeedForward backward gradient check\n";
     }
 
     std::cout << "All feed-forward tests passed." << std::endl;

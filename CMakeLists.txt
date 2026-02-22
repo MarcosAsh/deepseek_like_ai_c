@@ -110,6 +110,60 @@ if(APPLE)
 endif()
 add_test(NAME quantization_test COMMAND quantization_test)
 
+# LayerNorm + Dropout test
+add_executable(layer_norm_test test/layer_norm_test.cpp ${LIB_SOURCES})
+target_include_directories(layer_norm_test PRIVATE include)
+if(APPLE)
+  target_compile_definitions(layer_norm_test PRIVATE USE_ACCELERATE)
+  target_link_libraries(layer_norm_test PRIVATE "-framework Accelerate")
+endif()
+add_test(NAME layer_norm_test COMMAND layer_norm_test)
+
+# AD layers test (ADLinear, ADEmbedding, ADLayerNorm, ADPositionalEncoding)
+add_executable(ad_layers_test test/ad_layers_test.cpp ${LIB_SOURCES})
+target_include_directories(ad_layers_test PRIVATE include)
+if(APPLE)
+  target_compile_definitions(ad_layers_test PRIVATE USE_ACCELERATE)
+  target_link_libraries(ad_layers_test PRIVATE "-framework Accelerate")
+endif()
+add_test(NAME ad_layers_test COMMAND ad_layers_test)
+
+# AD transformer test
+add_executable(ad_transformer_test test/ad_transformer_test.cpp ${LIB_SOURCES})
+target_include_directories(ad_transformer_test PRIVATE include)
+if(APPLE)
+  target_compile_definitions(ad_transformer_test PRIVATE USE_ACCELERATE)
+  target_link_libraries(ad_transformer_test PRIVATE "-framework Accelerate")
+endif()
+add_test(NAME ad_transformer_test COMMAND ad_transformer_test)
+
+# MoE test
+add_executable(moe_test test/moe_test.cpp ${LIB_SOURCES})
+target_include_directories(moe_test PRIVATE include)
+if(APPLE)
+  target_compile_definitions(moe_test PRIVATE USE_ACCELERATE)
+  target_link_libraries(moe_test PRIVATE "-framework Accelerate")
+endif()
+add_test(NAME moe_test COMMAND moe_test)
+
+# Optimizer test
+add_executable(optimizer_test test/optimizer_test.cpp ${LIB_SOURCES})
+target_include_directories(optimizer_test PRIVATE include)
+if(APPLE)
+  target_compile_definitions(optimizer_test PRIVATE USE_ACCELERATE)
+  target_link_libraries(optimizer_test PRIVATE "-framework Accelerate")
+endif()
+add_test(NAME optimizer_test COMMAND optimizer_test)
+
+# MLA test
+add_executable(mla_test test/mla_test.cpp ${LIB_SOURCES})
+target_include_directories(mla_test PRIVATE include)
+if(APPLE)
+  target_compile_definitions(mla_test PRIVATE USE_ACCELERATE)
+  target_link_libraries(mla_test PRIVATE "-framework Accelerate")
+endif()
+add_test(NAME mla_test COMMAND mla_test)
+
 # BPE training tool
 add_executable(train_bpe src/train_bpe.cpp)
 target_include_directories(train_bpe PRIVATE include)

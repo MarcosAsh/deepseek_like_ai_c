@@ -56,10 +56,53 @@ int main() {
         assert(dec == "ab c");
     }
     
+    // Test 3: Single character token
+    const std::string vocab_single = "tokenizer_vocab_single_test.txt";
+    {
+        std::ofstream vf(vocab_single);
+        assert(vf);
+        vf << "a 0\n";
+        vf << "<unk> 1\n";
+    }
+    {
+        Tokenizer t(vocab_single);
+        auto tok = t.encode("a");
+        assert(tok.size() == 1);
+        assert(tok[0] == 0);
+        std::string dec = t.decode(tok);
+        assert(dec == "a");
+    }
+
+    // Test 4: All unknown tokens
+    {
+        Tokenizer t(vocab_single);
+        auto tok = t.encode("xyz abc");
+        // All words are unknown
+        for (auto& id : tok) {
+            assert(id == 1);  // <unk>
+        }
+    }
+
+    // Test 5: Vocab size check
+    {
+        Tokenizer t(vocab_path);
+        assert(t.vocab_size() == 3);  // hello, world, <unk>
+    }
+
+    // Test 6: to_id method
+    {
+        Tokenizer t(vocab_path);
+        assert(t.to_id("hello") == 0);
+        assert(t.to_id("world") == 1);
+        assert(t.to_id("<unk>") == 2);
+        assert(t.to_id("nonexistent") == -1);
+    }
+
     // Cleanup temporary files
     std::remove(vocab_path.c_str());
     std::remove(vocab_bpe.c_str());
     std::remove(bpe_path.c_str());
+    std::remove(vocab_single.c_str());
 
     std::cout << "All Tokenizer tests passed." << std::endl;
     return 0;

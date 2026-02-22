@@ -94,6 +94,62 @@ int main() {
         }
     }
 
+    // Batched embedding lookup
+    {
+        int vocab_size = 10;
+        int embed_dim = 4;
+        Embedding emb(vocab_size, embed_dim);
+        std::vector<int> tokens = {0, 1, 2, 3, 4, 5};
+        Tensor out = emb.forward(tokens);
+        assert(out.rows == embed_dim);
+        assert(out.cols == 6);
+        // Each column should be a valid embedding vector
+        for (int j = 0; j < 6; ++j) {
+            for (int i = 0; i < embed_dim; ++i) {
+                assert(std::isfinite(out(i, j)));
+            }
+        }
+        std::cout << "  [PASS] Batched embedding lookup\n";
+    }
+
+    // Multi-seq positional encoding
+    {
+        int embed_dim = 8;
+        int max_len = 100;
+        PositionalEncoding pe(embed_dim, max_len);
+        for (int seq_len : {1, 5, 50, 100}) {
+            Tensor out = pe.forward(seq_len);
+            assert(out.rows == embed_dim);
+            assert(out.cols == seq_len);
+            for (auto& v : out.data) {
+                assert(std::isfinite(v));
+            }
+        }
+        std::cout << "  [PASS] Multi-seq positional encoding\n";
+    }
+
+    // Linear with batch (multi-column input)
+    {
+        int in_dim = 3, out_dim = 2;
+        Linear lin(in_dim, out_dim);
+        lin.weights.data = {1, 0, 0, 0, 1, 0};  // First row selects x[0], second selects x[1]
+        lin.bias.data = {0.0f, 0.0f};
+        Tensor inp(in_dim, 3);
+        inp(0, 0) = 1.0f; inp(1, 0) = 2.0f; inp(2, 0) = 3.0f;
+        inp(0, 1) = 4.0f; inp(1, 1) = 5.0f; inp(2, 1) = 6.0f;
+        inp(0, 2) = 7.0f; inp(1, 2) = 8.0f; inp(2, 2) = 9.0f;
+        Tensor out = lin.forward(inp);
+        assert(out.rows == out_dim);
+        assert(out.cols == 3);
+        assert(almost_eq(out(0, 0), 1.0f));
+        assert(almost_eq(out(1, 0), 2.0f));
+        assert(almost_eq(out(0, 1), 4.0f));
+        assert(almost_eq(out(1, 1), 5.0f));
+        assert(almost_eq(out(0, 2), 7.0f));
+        assert(almost_eq(out(1, 2), 8.0f));
+        std::cout << "  [PASS] Linear with batch\n";
+    }
+
     std::cout << "All layer tests passed." << std::endl;
     return 0;
 }
