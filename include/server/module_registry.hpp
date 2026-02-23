@@ -19,7 +19,6 @@ public:
     std::unique_ptr<ModuleWrapper> create(const std::string& type_name,
                                           const json& config = json::object()) const;
 
-    // Returns JSON array of all registered module catalog entries
     json get_catalog() const;
 
     bool has(const std::string& type_name) const;
@@ -29,7 +28,6 @@ private:
     std::unordered_map<std::string, ModuleFactory> factories_;
 };
 
-// Called once to register all built-in modules
 void register_all_modules(ModuleRegistry& registry);
 
 } // namespace server

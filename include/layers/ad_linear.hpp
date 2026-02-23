@@ -1,11 +1,9 @@
 #pragma once
 #include "autodiff.hpp"
 
-// AD-aware Linear layer: y = W * x + b
 class ADLinear {
 public:
     ADLinear(int input_dim, int output_dim);
-    // Forward pass: x [input_dim x seq_len] -> [output_dim x seq_len]
     std::shared_ptr<ADTensor> forward(const std::shared_ptr<ADTensor>& x) const;
 
 private:

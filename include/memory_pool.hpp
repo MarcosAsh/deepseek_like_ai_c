@@ -1,4 +1,3 @@
-// Unified memory manager for on-chip (unified) memory pools
 #pragma once
 #include <cstddef>
 #include <mutex>
@@ -6,17 +5,13 @@
 
 class UnifiedMemoryManager {
 public:
-    // Retrieve the singleton instance
     static UnifiedMemoryManager& instance();
 
-    // Initialize the on-chip pool with given size in bytes (call once)
     void init(std::size_t max_on_chip_bytes);
 
-    // Allocate a block of memory of given size
-    // Returns pointer to on-chip pool if available, otherwise fallback to heap
+    // Falls back to heap if on-chip pool is exhausted
     void* allocate(std::size_t bytes);
 
-    // Deallocate a previously allocated block
     void deallocate(void* ptr, std::size_t bytes);
 
     UnifiedMemoryManager(const UnifiedMemoryManager&) = delete;

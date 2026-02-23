@@ -28,7 +28,6 @@ void SGD::zero_grad() {
     }
 }
 
-// === AdamW optimizer ===
 AdamW::AdamW(float lr_, float beta1_, float beta2_, float eps_, float weight_decay_, float clip_norm_)
     : lr(lr_), beta1(beta1_), beta2(beta2_), eps(eps_),
       weight_decay(weight_decay_), clip_norm(clip_norm_), t(0) {}
@@ -36,7 +35,6 @@ AdamW::AdamW(float lr_, float beta1_, float beta2_, float eps_, float weight_dec
 void AdamW::step() {
     auto& params = get_parameters();
     size_t Np = params.size();
-    // initialize moment buffers
     if (m.size() < Np) {
         for (size_t i = m.size(); i < Np; ++i) {
             int r = params[i]->val.rows;
@@ -47,7 +45,6 @@ void AdamW::step() {
             v.back().fill(0.0f);
         }
     }
-    // gradient clipping
     if (clip_norm > 0.0f) {
         double sum_sq = 0.0;
         for (auto& p : params) {
@@ -62,7 +59,6 @@ void AdamW::step() {
         }
     }
     t += 1;
-    // parameter update
     for (size_t i = 0; i < Np; ++i) {
         Tensor& grad = params[i]->grad;
         Tensor& val  = params[i]->val;

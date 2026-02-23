@@ -13,144 +13,101 @@ static bool almost_eq(float a, float b, float eps = 1e-4f) {
 }
 
 int main() {
-    // ===================== ADLinear Tests =====================
-
-    // Test 1: ADLinear forward shape
+    // ADLinear: forward produces correct shape
     {
         clear_parameters();
-        int in_dim = 4, out_dim = 6, seq_len = 3;
-        ADLinear lin(in_dim, out_dim);
-        Tensor input_t(in_dim, seq_len);
+        ADLinear lin(4, 6);
+        Tensor input_t(4, 3);
         for (auto& v : input_t.data) v = 0.5f;
-        auto input = make_ad(input_t);
-        auto out = lin.forward(input);
-        assert(out->val.rows == out_dim);
-        assert(out->val.cols == seq_len);
-        std::cout << "  [PASS] ADLinear forward shape\n";
+        auto out = lin.forward(make_ad(input_t));
+        assert(out->val.rows == 6);
+        assert(out->val.cols == 3);
     }
 
-    // Test 2: ADLinear backward - finite gradients
+    // ADLinear: backward produces finite gradients
     {
         clear_parameters();
-        int in_dim = 3, out_dim = 2, seq_len = 2;
-        ADLinear lin(in_dim, out_dim);
-        Tensor input_t(in_dim, seq_len);
+        ADLinear lin(3, 2);
+        Tensor input_t(3, 2);
         for (auto& v : input_t.data) v = 1.0f;
         auto input = make_ad(input_t);
         register_parameter(input);
-        auto out = lin.forward(input);
-        auto s = sum(out);
+        auto s = sum(lin.forward(input));
         s->backward();
-        for (auto& v : input->grad.data) {
+        for (auto& v : input->grad.data)
             assert(std::isfinite(v));
-        }
-        std::cout << "  [PASS] ADLinear backward finite grads\n";
     }
 
-    // Test 3: ADLinear finite difference gradient check
+    // ADLinear: finite difference gradient check
     {
         clear_parameters();
-        int in_dim = 2, out_dim = 2;
-        ADLinear lin(in_dim, out_dim);
+        int in_dim = 2;
+        ADLinear lin(in_dim, 2);
         Tensor input_t(in_dim, 1);
         input_t.data = {1.0f, 2.0f};
 
-        // Compute analytical gradient
         auto input = make_ad(input_t);
         register_parameter(input);
-        auto out = lin.forward(input);
-        auto s = sum(out);
+        auto s = sum(lin.forward(input));
         s->backward();
-        std::vector<float> analytical_grad(input->grad.data.begin(), input->grad.data.end());
+        std::vector<float> analytical(input->grad.data.begin(), input->grad.data.end());
 
-        // Compute numerical gradient with finite differences
         float eps = 1e-3f;
         for (int i = 0; i < in_dim; ++i) {
             clear_parameters();
-            Tensor inp_plus(in_dim, 1);
-            inp_plus.data = input_t.data;
-            inp_plus.data[i] += eps;
-            auto ap = make_ad(inp_plus);
-            auto op = lin.forward(ap);
-            auto sp = sum(op);
-            float f_plus = sp->val.data[0];
+            Tensor p(in_dim, 1); p.data = input_t.data; p.data[i] += eps;
+            float f_plus = sum(lin.forward(make_ad(p)))->val.data[0];
 
             clear_parameters();
-            Tensor inp_minus(in_dim, 1);
-            inp_minus.data = input_t.data;
-            inp_minus.data[i] -= eps;
-            auto am = make_ad(inp_minus);
-            auto om = lin.forward(am);
-            auto sm = sum(om);
-            float f_minus = sm->val.data[0];
+            Tensor m(in_dim, 1); m.data = input_t.data; m.data[i] -= eps;
+            float f_minus = sum(lin.forward(make_ad(m)))->val.data[0];
 
             float numerical = (f_plus - f_minus) / (2.0f * eps);
-            assert(almost_eq(analytical_grad[i], numerical, 0.05f));
+            assert(almost_eq(analytical[i], numerical, 0.05f));
         }
-        std::cout << "  [PASS] ADLinear finite difference gradient check\n";
     }
 
-    // ===================== ADEmbedding Tests =====================
-
-    // Test 4: ADEmbedding token lookup shape
+    // ADEmbedding: lookup produces [embed x seq_len]
     {
         clear_parameters();
-        int vocab = 10, embed = 8;
-        ADEmbedding emb(vocab, embed);
-        std::vector<int> tokens = {0, 3, 7, 1};
-        auto out = emb.forward(tokens);
-        assert(out->val.rows == embed);
-        assert(out->val.cols == (int)tokens.size());
-        std::cout << "  [PASS] ADEmbedding token lookup shape\n";
+        ADEmbedding emb(10, 8);
+        auto out = emb.forward({0, 3, 7, 1});
+        assert(out->val.rows == 8);
+        assert(out->val.cols == 4);
     }
 
-    // Test 5: ADEmbedding same token same embedding
+    // ADEmbedding: same token gives same embedding
     {
         clear_parameters();
-        int vocab = 5, embed = 4;
-        ADEmbedding emb(vocab, embed);
-        std::vector<int> tokens = {2, 0, 2};
-        auto out = emb.forward(tokens);
-        // Col 0 and col 2 should be identical (both token 2)
-        for (int i = 0; i < embed; ++i) {
+        ADEmbedding emb(5, 4);
+        auto out = emb.forward({2, 0, 2});
+        for (int i = 0; i < 4; ++i)
             assert(almost_eq(out->val(i, 0), out->val(i, 2)));
-        }
-        std::cout << "  [PASS] ADEmbedding same token same embedding\n";
     }
 
-    // Test 6: ADEmbedding get_weights
+    // ADEmbedding: get_weights returns [embed x vocab]
     {
         clear_parameters();
-        int vocab = 5, embed = 3;
-        ADEmbedding emb(vocab, embed);
+        ADEmbedding emb(5, 3);
         auto w = emb.get_weights();
-        assert(w->val.rows == embed);
-        assert(w->val.cols == vocab);
-        std::cout << "  [PASS] ADEmbedding get_weights\n";
+        assert(w->val.rows == 3);
+        assert(w->val.cols == 5);
     }
 
-    // Test 7: ADEmbedding backward - gradients flow
+    // ADEmbedding: backward propagates gradients to weight matrix
     {
         clear_parameters();
-        int vocab = 5, embed = 4;
-        ADEmbedding emb(vocab, embed);
-        std::vector<int> tokens = {1, 3};
-        auto out = emb.forward(tokens);
-        auto s = sum(out);
+        ADEmbedding emb(5, 4);
+        auto s = sum(emb.forward({1, 3}));
         s->backward();
-        // Weights should have gradients
         auto w = emb.get_weights();
-        bool has_nonzero_grad = false;
-        for (auto& v : w->grad.data) {
-            if (std::fabs(v) > 1e-8f) has_nonzero_grad = true;
-        }
-        assert(has_nonzero_grad);
-        std::cout << "  [PASS] ADEmbedding backward gradients flow\n";
+        bool has_grad = false;
+        for (auto& v : w->grad.data)
+            if (std::fabs(v) > 1e-8f) has_grad = true;
+        assert(has_grad);
     }
 
-    // ===================== ADLayerNorm Tests =====================
-
-    // Test 8: ADLayerNorm forward - normalized mean~0
+    // ADLayerNorm: output columns have mean~0
     {
         clear_parameters();
         int dim = 8, seq_len = 3;
@@ -159,86 +116,58 @@ int main() {
         for (int i = 0; i < dim; ++i)
             for (int j = 0; j < seq_len; ++j)
                 input_t(i, j) = (float)(i * seq_len + j) * 0.3f - 1.0f;
-        auto input = make_ad(input_t);
-        auto out = ln.forward(input);
+        auto out = ln.forward(make_ad(input_t));
         assert(out->val.rows == dim);
         assert(out->val.cols == seq_len);
-        // Check columns have mean~0
         for (int j = 0; j < seq_len; ++j) {
             float mean = 0.0f;
-            for (int i = 0; i < dim; ++i)
-                mean += out->val(i, j);
+            for (int i = 0; i < dim; ++i) mean += out->val(i, j);
             mean /= dim;
             assert(almost_eq(mean, 0.0f, 0.1f));
         }
-        std::cout << "  [PASS] ADLayerNorm forward mean~0\n";
     }
 
-    // Test 9: ADLayerNorm backward - finite gradients
+    // ADLayerNorm: backward produces finite gradients
     {
         clear_parameters();
-        int dim = 4, seq_len = 2;
-        ADLayerNorm ln(dim);
-        Tensor input_t(dim, seq_len);
+        ADLayerNorm ln(4);
+        Tensor input_t(4, 2);
         for (auto& v : input_t.data) v = 1.5f;
         auto input = make_ad(input_t);
         register_parameter(input);
-        auto out = ln.forward(input);
-        auto s = sum(out);
+        auto s = sum(ln.forward(input));
         s->backward();
-        for (auto& v : input->grad.data) {
+        for (auto& v : input->grad.data)
             assert(std::isfinite(v));
-        }
-        std::cout << "  [PASS] ADLayerNorm backward finite grads\n";
     }
 
-    // ===================== ADPositionalEncoding Tests =====================
-
-    // Test 10: ADPositionalEncoding forward shape
+    // ADPositionalEncoding: forward shape
     {
         clear_parameters();
-        int embed = 8, max_len = 64;
-        ADPositionalEncoding pe(embed, max_len);
-        int seq_len = 10;
-        auto out = pe.forward(seq_len);
-        assert(out->val.rows == embed);
-        assert(out->val.cols == seq_len);
-        std::cout << "  [PASS] ADPositionalEncoding forward shape\n";
+        ADPositionalEncoding pe(8, 64);
+        auto out = pe.forward(10);
+        assert(out->val.rows == 8);
+        assert(out->val.cols == 10);
     }
 
-    // Test 11: ADPositionalEncoding max_len boundary
+    // ADPositionalEncoding: exceeding max_len throws
     {
         clear_parameters();
-        int embed = 4, max_len = 8;
-        ADPositionalEncoding pe(embed, max_len);
-        // Within bounds should work
-        auto out = pe.forward(max_len);
-        assert(out->val.rows == embed);
-        assert(out->val.cols == max_len);
+        ADPositionalEncoding pe(4, 8);
+        auto out = pe.forward(8);
+        assert(out->val.cols == 8);
 
-        // Exceeding max_len should throw
         bool caught = false;
-        try {
-            pe.forward(max_len + 1);
-        } catch (...) {
-            caught = true;
-        }
+        try { pe.forward(9); } catch (...) { caught = true; }
         assert(caught);
-        std::cout << "  [PASS] ADPositionalEncoding max_len boundary\n";
     }
 
-    // Test 12: ADPositionalEncoding backward - gradients flow
+    // ADPositionalEncoding: backward doesn't crash
     {
         clear_parameters();
-        int embed = 4, max_len = 16;
-        ADPositionalEncoding pe(embed, max_len);
-        auto out = pe.forward(3);
-        auto s = sum(out);
+        ADPositionalEncoding pe(4, 16);
+        auto s = sum(pe.forward(3));
         s->backward();
-        // PE has learnable weights, check they got gradients
-        // (just check it didn't crash)
-        assert(s->val.data[0] != 0.0f || s->val.data[0] == 0.0f);  // always true, just validates path
-        std::cout << "  [PASS] ADPositionalEncoding backward\n";
     }
 
     std::cout << "All AD layers tests passed." << std::endl;

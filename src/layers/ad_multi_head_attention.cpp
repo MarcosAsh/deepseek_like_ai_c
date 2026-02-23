@@ -10,12 +10,10 @@ ADMultiHeadAttention::ADMultiHeadAttention(int embed_dim_, int num_heads_, bool 
         throw std::invalid_argument("embed_dim must be divisible by num_heads");
     }
     head_dim = embed_dim / num_heads;
-    // Compute ALiBi slopes for each head: slope[h] = 2^{-8*(h+1)/num_heads}
     alibi_slopes.resize(num_heads);
     for (int h = 0; h < num_heads; ++h) {
         alibi_slopes[h] = std::pow(2.0f, -8.0f * static_cast<float>(h + 1) / static_cast<float>(num_heads));
     }
-    // Initialize weight matrices
     Tensor tWq(embed_dim, embed_dim), tWk(embed_dim, embed_dim),
            tWv(embed_dim, embed_dim), tWo(embed_dim, embed_dim);
     std::mt19937 gen(std::random_device{}());
@@ -33,7 +31,6 @@ ADMultiHeadAttention::ADMultiHeadAttention(int embed_dim_, int num_heads_, bool 
 
 std::shared_ptr<ADTensor> ADMultiHeadAttention::forward(
     const std::shared_ptr<ADTensor>& input) {
-    // Project to Q, K, V
     auto Q = matmul(W_q, input);
     auto K = matmul(W_k, input);
     auto V = matmul(W_v, input);
@@ -45,15 +42,12 @@ std::shared_ptr<ADTensor> ADMultiHeadAttention::forward(
         auto Qh = slice(Q, offset, head_dim);
         auto Kh = slice(K, offset, head_dim);
         auto Vh = slice(V, offset, head_dim);
-        // Attention scores: [seq_len x seq_len] = Qh^T * Kh
         auto Qh_T = transpose(Qh);
         auto scores = matmul(Qh_T, Kh);
-        // Scale
         float scale = 1.0f / std::sqrt((float)head_dim);
         auto scores_scaled = scalar_mul(scores, scale);
-        // Apply ALiBi linear bias to scores
+        // ALiBi bias + causal mask
         {
-            // Build bias matrix [seq_len x seq_len]
             Tensor bias_t(seq_len, seq_len);
             for (int i = 0; i < seq_len; ++i) {
                 for (int j = 0; j < seq_len; ++j) {
@@ -67,8 +61,7 @@ std::shared_ptr<ADTensor> ADMultiHeadAttention::forward(
             auto bias_ad = make_ad(bias_t);
             scores_scaled = add(scores_scaled, bias_ad);
         }
-        // Softmax (with row-wise max subtraction for numerical stability)
-        // Compute row-wise max from forward values (constant, no gradient)
+        // row-wise softmax
         Tensor row_max_t(seq_len, 1);
         for (int i = 0; i < seq_len; ++i) {
             float mx = scores_scaled->val.data[i * seq_len];
@@ -77,30 +70,25 @@ std::shared_ptr<ADTensor> ADMultiHeadAttention::forward(
             }
             row_max_t.data[i] = mx;
         }
-        // Broadcast max to [seq_len x seq_len] and subtract
         Tensor ones_row_t(1, seq_len);
         for (int j = 0; j < seq_len; ++j) ones_row_t.data[j] = 1.0f;
         auto ones_row = make_ad(ones_row_t);
-        auto row_max_ad = make_ad(row_max_t);  // [seq_len x 1]
-        auto max_broadcast = matmul(row_max_ad, ones_row);  // [seq_len x seq_len]
+        auto row_max_ad = make_ad(row_max_t);
+        auto max_broadcast = matmul(row_max_ad, ones_row);
         auto scores_shifted = sub(scores_scaled, max_broadcast);
         auto scores_exp = exp_ad(scores_shifted);
-        // Sum across keys per query
         Tensor ones_col_t(seq_len, 1);
         for (int i = 0; i < seq_len; ++i) ones_col_t.data[i] = 1.0f;
         auto ones_col = make_ad(ones_col_t);
-        auto denom_col = matmul(scores_exp, ones_col);      // [seq_len x 1]
-        auto denom = matmul(denom_col, ones_row);          // [seq_len x seq_len]
+        auto denom_col = matmul(scores_exp, ones_col);
+        auto denom = matmul(denom_col, ones_row);
         auto denom_recip = reciprocal(denom);
-        auto attn = mul(scores_exp, denom_recip);          // [seq_len x seq_len]
-        // Weighted sum: head_out = Vh * attn^T  => [head_dim x seq_len]
+        auto attn = mul(scores_exp, denom_recip);
         auto attn_T = transpose(attn);
         auto head_out = matmul(Vh, attn_T);
         heads.push_back(head_out);
     }
-    // Concatenate heads -> [embed_dim x seq_len]
     auto concat_out = concat(heads);
-    // Final linear projection
     auto out = matmul(W_o, concat_out);
     return out;
 }

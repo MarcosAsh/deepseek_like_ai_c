@@ -17,17 +17,14 @@
 #include <limits>
 #include <cstdint>
 #include "timer.hpp"
-// Unified memory pool manager
 #include "memory_pool.hpp"
 #include "quantization.hpp"
 #include "loss.hpp"
-// Inference modules (non-AD)
 #include "layers/embedding.hpp"
 #include "layers/positional_encoding.hpp"
 #include "transformer.hpp"
 #include "layers/linear.hpp"
 
-// Checkpoint utilities: save/load model parameters
 static bool save_checkpoint(const std::string& path) {
     auto& params = get_parameters();
     std::ofstream out(path, std::ios::binary);
@@ -52,7 +49,6 @@ static bool load_checkpoint(const std::string& path) {
     if (num != params.size()) {
         std::cerr << "Warning: checkpoint parameter count mismatch (" << num << " vs " << params.size() << "), attempting partial load\n";
     }
-    // Load available parameters
     uint32_t to_load = std::min<uint32_t>(num, (uint32_t)params.size());
     int shape_mismatches = 0;
     for (uint32_t i = 0; i < to_load; ++i) {
@@ -76,16 +72,13 @@ static bool load_checkpoint(const std::string& path) {
     return true;
 }
 
-// Sample next token from logit vector using top-k, top-p, and temperature
 static int sample_next_token(const std::vector<float>& logits_in,
                              int top_k, float top_p, float temperature,
                              std::mt19937& rng) {
     int V = (int)logits_in.size();
-    // Apply temperature scaling
     std::vector<float> logit_v(V);
     for (int i = 0; i < V; ++i) logit_v[i] = logits_in[i] / temperature;
 
-    // Numerical stability: subtract max before exp
     float max_logit = *std::max_element(logit_v.begin(), logit_v.end());
 
     if (top_k > 0) {
@@ -120,7 +113,6 @@ static int sample_next_token(const std::vector<float>& logits_in,
     }
 }
 
-// Generate tokens autoregressively using AD model
 struct GenerateConfig {
     int max_new_tokens;
     int seq_len;
@@ -147,10 +139,8 @@ static std::vector<int> generate_tokens(
         auto pos_ad = ad_posenc.forward(context_len);
         auto x_ad = add(embed_ad, pos_ad);
         auto h_ad = ad_transformer.forward(x_ad);
-        // Compute logits via tied embedding weights
         auto Wt = transpose(W_embed);
         auto logits_ad = matmul(Wt, h_ad);
-        // Broadcast bias
         Tensor ones_bias_t(1, context_len);
         ones_bias_t.data.assign(context_len, 1.0f);
         auto ones_bias = make_ad(ones_bias_t);
@@ -158,7 +148,6 @@ static std::vector<int> generate_tokens(
         logits_ad = add(logits_ad, b_mat);
         Tensor logits = logits_ad->val;
         int last_idx = context_len - 1;
-        // Extract logits for last position
         std::vector<float> logit_v(vocab_size);
         for (int i = 0; i < vocab_size; ++i) logit_v[i] = logits(i, last_idx);
         int next_id = sample_next_token(logit_v, cfg.top_k, cfg.top_p, cfg.temperature, rng);
@@ -168,11 +157,7 @@ static std::vector<int> generate_tokens(
     return output_tokens;
 }
 
-// Sync AD parameter values into non-AD Transformer for KV-cached inference.
-// AD param registration order per block: ln1(gamma,beta), mha(W_q,W_k,W_v,W_o),
-// ln2(gamma,beta), ff(W1,b1,W2,b2) = 12 params per block.
-// Before blocks: embed(1 param), posenc(0 params).
-// After blocks: b_lm(1 param).
+// 12 params per block: ln1(gamma,beta), mha(Wq,Wk,Wv,Wo), ln2(gamma,beta), ff(W1,b1,W2,b2)
 static void sync_ad_to_inference(
     const std::vector<std::shared_ptr<ADTensor>>& params,
     int embed_param_idx,       // index of embedding weight param
@@ -181,65 +166,53 @@ static void sync_ad_to_inference(
     int num_layers,
     Embedding& embed,
     Transformer& transformer,
-    Tensor& out_W,             // [vocab_size x embed_dim]
-    Tensor& out_b) {           // [vocab_size x 1]
-    // Sync embedding weights
+    Tensor& out_W,
+    Tensor& out_b) {
     embed.weights = params[embed_param_idx]->val;
-
-    // Sync transformer blocks
     int params_per_block = 12;
     for (int layer = 0; layer < num_layers; ++layer) {
         int base = block_start_idx + layer * params_per_block;
         auto& block = transformer.blocks[layer];
-        // LN1 gamma, beta
         block.ln1.gamma = params[base+0]->val;
         block.ln1.beta  = params[base+1]->val;
-        // MHA W_q, W_k, W_v, W_o
         block.mha.W_q = params[base+2]->val;
         block.mha.W_k = params[base+3]->val;
         block.mha.W_v = params[base+4]->val;
         block.mha.W_o = params[base+5]->val;
-        // LN2 gamma, beta
         block.ln2.gamma = params[base+6]->val;
         block.ln2.beta  = params[base+7]->val;
-        // FF: W1, b1, W2, b2
         block.ff.fc1.weights = params[base+8]->val;
         block.ff.fc1.bias    = params[base+9]->val;
         block.ff.fc2.weights = params[base+10]->val;
         block.ff.fc2.bias    = params[base+11]->val;
     }
-    // Output projection: tied embedding transposed + LM head bias
-    out_W = params[embed_param_idx]->val.transpose();  // [vocab_size x embed_dim]
-    out_b = params[lm_bias_idx]->val;                  // [vocab_size x 1]
+    out_W = params[embed_param_idx]->val.transpose();
+    out_b = params[lm_bias_idx]->val;
 }
 
-// Generate tokens using non-AD Transformer with KV cache (faster inference)
 static std::vector<int> generate_tokens_cached(
     const std::vector<int>& prompt_tokens,
     Embedding& embed_layer,
     PositionalEncoding& posenc,
     Transformer& transformer,
-    const Tensor& out_W,   // [vocab_size x embed_dim]
-    const Tensor& out_b,   // [vocab_size x 1]
+    const Tensor& out_W,
+    const Tensor& out_b,
     int vocab_size,
     const GenerateConfig& cfg,
     std::mt19937& rng) {
     transformer.clear_cache();
     std::vector<int> output_tokens = prompt_tokens;
 
-    // Prefill: process entire prompt at once
+    // prefill
     {
         Tensor x = embed_layer.forward(prompt_tokens);
         Tensor pos = posenc.forward((int)prompt_tokens.size());
-        // x + pos
         for (size_t i = 0; i < x.data.size(); ++i) x.data[i] += pos.data[i];
-        Tensor h = transformer.forward(x, false, true);  // use_cache=true
-        // Extract logits for last position only
+        Tensor h = transformer.forward(x, false, true);
         int last_idx = (int)prompt_tokens.size() - 1;
         Tensor h_last(h.rows, 1);
         for (int r = 0; r < h.rows; ++r) h_last.data[r] = h(r, last_idx);
         Tensor logits = out_W.matmul(h_last);
-        // Add bias
         for (int i = 0; i < vocab_size; ++i) logits.data[i] += out_b.data[i];
         std::vector<float> logit_v(vocab_size);
         for (int i = 0; i < vocab_size; ++i) logit_v[i] = logits.data[i];
@@ -249,17 +222,15 @@ static std::vector<int> generate_tokens_cached(
             return output_tokens;
     }
 
-    // Decode: process one token at a time with KV cache
+    // decode one token at a time
     for (int step = 1; step < cfg.max_new_tokens; ++step) {
         int token = output_tokens.back();
-        Tensor x = embed_layer.forward({token});  // [embed_dim x 1]
+        Tensor x = embed_layer.forward({token});
         int pos_idx = (int)output_tokens.size() - 1;
-        Tensor pos = posenc.forward(pos_idx + 1);  // get full encoding, take last col
-        // Add positional encoding for current position
+        Tensor pos = posenc.forward(pos_idx + 1);
         for (int r = 0; r < x.rows; ++r)
             x.data[r] += pos(r, pos_idx);
-        Tensor h = transformer.forward(x, false, true);  // use_cache=true, processes single token
-        // Compute logits
+        Tensor h = transformer.forward(x, false, true);
         Tensor logits = out_W.matmul(h);
         for (int i = 0; i < vocab_size; ++i) logits.data[i] += out_b.data[i];
         std::vector<float> logit_v(vocab_size);
@@ -271,7 +242,6 @@ static std::vector<int> generate_tokens_cached(
     return output_tokens;
 }
 
-// Simple ASCII sparkline for loss visualization
 static std::string sparkline(const std::vector<float>& data) {
     if (data.empty()) return std::string();
     static const std::vector<std::string> levels = {"▁","▂","▃","▄","▅","▆","▇","█"};
@@ -291,7 +261,6 @@ static std::string sparkline(const std::vector<float>& data) {
 }
 
 int main(int argc, char** argv) {
-    // Default configuration
     std::string mode;
     std::string data_file;
     std::string vocab_file = "input_files/vocab.txt";
@@ -309,26 +278,20 @@ int main(int argc, char** argv) {
     std::string save_file = "checkpoint.bin";
     std::string valid_file;
     int patience = 2;
-    // On-chip unified memory pool size (MB, 0 to disable)
     long pool_size_mb = 0;
-    // Quantization parameters
     bool qat_enabled = false;
     int qat_bits = 8;
     std::string ptq_out;
-    // Inference mode parameters
     std::string generate_file;
     int max_new_tokens = 32;
-    // Sampling strategy: top-k or top-p (nucleus) sampling; defaults to greedy if both disabled
     int top_k = 0;
     float top_p = 0.0f;
     float temperature = 1.0f;
-    // MoE parameters
     bool use_moe = false;
     int moe_num_experts = 4;
     int moe_top_k_experts = 2;
     float moe_aux_weight = 0.01f;
 
-    // Parse command-line args (manual parser)
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "--train" && i + 1 < argc) {
@@ -366,32 +329,24 @@ int main(int argc, char** argv) {
             mode = "generate";
             generate_file = argv[++i];
         } else if (arg == "--cli") {
-            // Interactive CLI REPL mode
             mode = "cli";
         } else if (arg == "--max_new_tokens" && i + 1 < argc) {
             max_new_tokens = std::stoi(argv[++i]);
         } else if (arg == "--top_k" && i + 1 < argc) {
-            // Top-k sampling (greedy if 0)
             top_k = std::stoi(argv[++i]);
         } else if (arg == "--top_p" && i + 1 < argc) {
-            // Top-p (nucleus) sampling (greedy if 0)
             top_p = std::stof(argv[++i]);
         } else if (arg == "--temperature" && i + 1 < argc) {
             temperature = std::stof(argv[++i]);
         } else if (arg == "--bpe-codes" && i + 1 < argc) {
-            // Path to BPE merge rules file
             bpe_codes_file = argv[++i];
         } else if (arg == "--qat") {
-            // Enable quantization-aware training
             qat_enabled = true;
         } else if (arg == "--qat-bits" && i + 1 < argc) {
-            // Number of bits for quantization (default 8)
             qat_bits = std::stoi(argv[++i]);
         } else if (arg == "--ptq-out" && i + 1 < argc) {
-            // Path to dump post-training quantized model
             ptq_out = argv[++i];
         } else if (arg == "--pool_size_mb" && i + 1 < argc) {
-            // On-chip unified memory pool size in megabytes
             pool_size_mb = std::stol(argv[++i]);
         } else if (arg == "--timer") {
             Timer::enabled = true;
@@ -443,22 +398,18 @@ int main(int argc, char** argv) {
         }
     }
 
-    // Initialize quantization settings
     quant::g_qat_enabled = qat_enabled;
     quant::g_qat_bits = qat_bits;
     if (quant::g_qat_enabled) {
         std::cout << "Quantization-aware training enabled (" << qat_bits << " bits)\n";
     }
-    // Initialize unified memory pool if requested
     if (pool_size_mb > 0) {
         UnifiedMemoryManager::instance().init(pool_size_mb * 1024 * 1024);
         std::cout << "Initialized on-chip memory pool of size " << pool_size_mb << " MB\n";
     }
-    // Interactive CLI REPL mode
     if (mode == "cli") {
         Tokenizer tokenizer(vocab_file, bpe_codes_file);
         int V = (int)tokenizer.vocab_size();
-        // Build AD modules to load checkpoint
         ADEmbedding ad_embed(V, embed_dim);
         ADPositionalEncoding ad_posenc(embed_dim, max_len);
         ADTransformer ad_transformer(num_layers, embed_dim, hidden_dim, n_heads, use_moe, moe_num_experts, moe_top_k_experts);
@@ -472,13 +423,12 @@ int main(int argc, char** argv) {
             if (!load_checkpoint(save_file)) return 1;
             std::cout << "Loaded checkpoint from " << save_file << "\n";
         }
-        // Build non-AD inference model and sync weights for KV-cached generation
         Embedding inf_embed(V, embed_dim);
         PositionalEncoding inf_posenc(embed_dim, max_len);
         Transformer inf_transformer(num_layers, embed_dim, hidden_dim, n_heads);
         Tensor out_W(V, embed_dim), out_b(V, 1);
         auto& params = get_parameters();
-        // Param layout: embed(0), blocks start at 1, b_lm is last
+        // param layout: embed(0), blocks start at 1, b_lm is last
         sync_ad_to_inference(params, 0, 1, (int)params.size()-1, num_layers,
                              inf_embed, inf_transformer, out_W, out_b);
         std::mt19937 gen(std::random_device{}());
@@ -496,7 +446,6 @@ int main(int argc, char** argv) {
         }
         return 0;
     }
-    // One-shot generate mode
     if (mode == "generate") {
         Tokenizer tokenizer(vocab_file, bpe_codes_file);
         int V = (int)tokenizer.vocab_size();
@@ -509,7 +458,6 @@ int main(int argc, char** argv) {
             std::cerr << "No prompt file provided for generation\n"; return 1;
         }
         auto tokens = tokenizer.encode(prompt);
-        // Build AD modules to load checkpoint
         ADEmbedding ad_embed(V, embed_dim);
         ADPositionalEncoding ad_posenc(embed_dim, max_len);
         ADTransformer ad_transformer(num_layers, embed_dim, hidden_dim, n_heads, use_moe, moe_num_experts, moe_top_k_experts);
@@ -523,7 +471,6 @@ int main(int argc, char** argv) {
             if (!load_checkpoint(save_file)) return 1;
             std::cout << "Loaded checkpoint from " << save_file << "\n";
         }
-        // Build non-AD inference model and sync weights
         Embedding inf_embed(V, embed_dim);
         PositionalEncoding inf_posenc(embed_dim, max_len);
         Transformer inf_transformer(num_layers, embed_dim, hidden_dim, n_heads);
@@ -539,12 +486,10 @@ int main(int argc, char** argv) {
         std::cout << tokenizer.decode(output_tokens) << std::endl;
         return 0;
     }
-    // Training mode must be explicitly set
     if (mode != "train" || data_file.empty()) {
         std::cerr << "Usage: deepseek_ai --train data.txt [--vocab vocab.txt] [--seq_len N] ...\n";
         return 1;
     }
-    // Print configuration
     std::cout << "Training on: " << data_file << "\n"
               << "Vocab file: " << vocab_file << "\n"
               << "embed_dim=" << embed_dim << " hidden_dim=" << hidden_dim
@@ -559,7 +504,6 @@ int main(int argc, char** argv) {
                   << moe_top_k_experts << ", aux_weight=" << moe_aux_weight << "\n";
     }
 
-    // Load tokenizer and dataset
     Tokenizer tokenizer(vocab_file, bpe_codes_file);
     std::ifstream in(data_file);
     if (!in) {
@@ -575,7 +519,6 @@ int main(int argc, char** argv) {
         std::cerr << "Not enough tokens in data (need > " << seq_len + 1 << ")\n";
         return 1;
     }
-    // Prepare validation data if provided
     std::vector<int> val_tokens;
     std::vector<int> val_starts;
     if (!valid_file.empty()) {
@@ -598,28 +541,21 @@ int main(int argc, char** argv) {
         }
     }
 
-    // AD Model components
     ADEmbedding ad_embed(tokenizer.vocab_size(), embed_dim);
     ADPositionalEncoding ad_posenc(embed_dim, max_len);
     ADTransformer ad_transformer(num_layers, embed_dim, hidden_dim, n_heads, use_moe, moe_num_experts, moe_top_k_experts);
-    // Tied Embedding-LM head weights
-    auto W_embed = ad_embed.get_weights(); // [embed_dim x vocab_size]
-    // Bias for LM head
+    auto W_embed = ad_embed.get_weights();
     int Vocab = (int)tokenizer.vocab_size();
     Tensor tb_lm(Vocab, 1);
     tb_lm.data.assign(Vocab, 0.0f);
     auto b_lm = make_ad(tb_lm);
     register_parameter(b_lm);
-    // Optimizer: AdamW with default betas, eps, weight_decay=0.01, clip_norm=1.0
     AdamW optimizer(lr);
-    // Load checkpoint if requested
     if (!resume_file.empty()) {
         if (!load_checkpoint(resume_file)) return 1;
         std::cout << "Loaded checkpoint from " << resume_file << "\n";
     }
 
-    // Training loop with mini-batching and data shuffling
-    // Prepare sequence start indices
     std::vector<int> starts;
     for (int s = 0; s + seq_len < N; s += seq_len) {
         starts.push_back(s);
@@ -628,49 +564,38 @@ int main(int argc, char** argv) {
     std::vector<float> val_history;
     std::vector<float> grad_z;
     grad_z.reserve(tokenizer.vocab_size());
-    // Random generator for shuffling
     std::mt19937 rng(1234);
-    // Early stopping state
     int no_improve = 0;
     float best_val_loss = std::numeric_limits<float>::infinity();
     for (int epoch = 1; epoch <= epochs; ++epoch) {
-        // Shuffle data indices
         std::shuffle(starts.begin(), starts.end(), rng);
         float total_loss = 0.0f;
         int count = 0;
-        // Iterate over mini-batches
         for (size_t batch_start = 0; batch_start < starts.size(); batch_start += batch_size) {
             optimizer.zero_grad();
             size_t batch_end = std::min(batch_start + batch_size, starts.size());
-            // Process each sequence in the batch
             for (size_t idx = batch_start; idx < batch_end; ++idx) {
                 int start = starts[idx];
-                // Prepare input and target
                 std::vector<int> input_ids(data_tokens.begin() + start,
                                            data_tokens.begin() + start + seq_len);
                 std::vector<int> target_ids(data_tokens.begin() + start + 1,
                                             data_tokens.begin() + start + seq_len + 1);
-                // AD forward
                 auto embed_ad = ad_embed.forward(input_ids);
                 auto pos_ad   = ad_posenc.forward(seq_len);
                 auto x_ad     = add(embed_ad, pos_ad);
-                // Time the transformer forward pass
                 std::shared_ptr<ADTensor> h_ad;
                 std::shared_ptr<ADTensor> moe_aux_loss;
                 {
                     Timer t("ADTransformer forward");
                     h_ad = ad_transformer.forward(x_ad, use_moe ? &moe_aux_loss : nullptr);
                 }
-                // Compute logits via tied embedding weights
-                auto Wt = transpose(W_embed);  // [vocab_size x embed_dim]
-                auto logits_ad = matmul(Wt, h_ad);  // [vocab_size x seq_len]
-                // Broadcast bias using fixed seq_len
+                auto Wt = transpose(W_embed);
+                auto logits_ad = matmul(Wt, h_ad);
                 Tensor ones_bias_t(1, seq_len);
                 ones_bias_t.data.assign(seq_len, 1.0f);
                 auto ones_bias = make_ad(ones_bias_t);
-                auto b_mat = matmul(b_lm, ones_bias);  // [vocab_size x seq_len]
+                auto b_mat = matmul(b_lm, ones_bias);
                 logits_ad = add(logits_ad, b_mat);
-                // Build target one-hot [vocab x seq_len]
                 int V = (int)tokenizer.vocab_size();
                 Tensor target_tensor(V, seq_len);
                 target_tensor.data.assign(V * seq_len, 0.0f);
@@ -681,11 +606,9 @@ int main(int argc, char** argv) {
                     }
                 }
                 auto target_ad = make_ad(target_tensor);
-                // Cross-entropy loss via AD (log-sum-exp trick for numerical stability):
-                // sum1 = sum(logits * target)  (sum of true class logits)
+                // cross-entropy via log-sum-exp
                 auto prod_ad = mul(logits_ad, target_ad);
                 auto sum1_ad = sum(prod_ad);
-                // Compute column-wise max from forward values (constant, no gradient)
                 Tensor max_per_col(1, seq_len);
                 for (int col = 0; col < seq_len; ++col) {
                     float mx = logits_ad->val.data[0 * seq_len + col];
@@ -694,56 +617,45 @@ int main(int argc, char** argv) {
                     }
                     max_per_col.data[col] = mx;
                 }
-                // Broadcast max to [V x seq_len] and subtract for stability
                 Tensor ones_col_v(V, 1);
                 ones_col_v.data.assign(V, 1.0f);
                 auto ones_col_ad = make_ad(ones_col_v);
-                auto max_ad = make_ad(max_per_col);  // [1 x seq_len]
-                auto max_broadcast = matmul(ones_col_ad, max_ad);  // [V x seq_len]
+                auto max_ad = make_ad(max_per_col);
+                auto max_broadcast = matmul(ones_col_ad, max_ad);
                 auto shifted_logits = sub(logits_ad, max_broadcast);
-                // denom: sum_exp per column (now numerically stable)
                 Tensor ones_row_t(1, V);
                 ones_row_t.data.assign(V, 1.0f);
                 auto ones_row = make_ad(ones_row_t);
                 auto exp_shifted = exp_ad(shifted_logits);
-                auto denom_row = matmul(ones_row, exp_shifted);    // [1 x seq_len]
-                // log denom per column + add back max
-                auto log_denoms = log_ad(denom_row);                // [1 x seq_len]
-                auto log_sum_exp = add(log_denoms, max_ad);         // [1 x seq_len]
+                auto denom_row = matmul(ones_row, exp_shifted);
+                auto log_denoms = log_ad(denom_row);
+                auto log_sum_exp = add(log_denoms, max_ad);
                 auto sum2_ad = sum(log_sum_exp);
-                // loss = sum(log_sum_exp) - sum(true_logits)
                 auto loss_ad = sub(sum2_ad, sum1_ad);
-                // Add MoE auxiliary loss if enabled
                 if (use_moe && moe_aux_loss) {
                     auto weighted_aux = scalar_mul(moe_aux_loss, moe_aux_weight);
                     loss_ad = add(loss_ad, weighted_aux);
                 }
-                // Backward (accumulate gradients)
                 loss_ad->backward();
-                // Accumulate loss
                 float loss = loss_ad->val.data[0];
                 total_loss += loss;
                 ++count;
             }
-            // Update parameters after processing the batch
             optimizer.step();
         }
         float avg_loss = total_loss / count;
         std::cout << "Epoch " << epoch << ": Avg XEnt loss = " << avg_loss << "\n";
         loss_history.push_back(avg_loss);
-        // Save checkpoint after each epoch
         if (!save_file.empty()) {
             if (!save_checkpoint(save_file))
                 std::cerr << "Error: failed saving checkpoint to " << save_file << "\n";
             else
                 std::cout << "Saved checkpoint to " << save_file << "\n";
         }
-        // Validation and early stopping
         if (!valid_file.empty()) {
             float val_loss = 0.0f;
             int val_count = 0;
             for (int vs : val_starts) {
-                // Prepare input and target
                 std::vector<int> inp(val_tokens.begin() + vs,
                                      val_tokens.begin() + vs + seq_len);
                 std::vector<int> tgt(val_tokens.begin() + vs + 1,
@@ -752,16 +664,13 @@ int main(int argc, char** argv) {
                 auto pos_v   = ad_posenc.forward(seq_len);
                 auto x_v     = add(embed_v, pos_v);
                 auto h_v     = ad_transformer.forward(x_v);
-                // Compute validation logits via tied embedding weights
-                auto Wt_v = transpose(W_embed);  // [vocab_size x embed_dim]
-                auto logits_v = matmul(Wt_v, h_v);  // [vocab_size x seq_len]
-                // Broadcast bias
+                auto Wt_v = transpose(W_embed);
+                auto logits_v = matmul(Wt_v, h_v);
                 Tensor ones_row_v_t(1, seq_len);
                 ones_row_v_t.data.assign(seq_len, 1.0f);
                 auto ones_row_v = make_ad(ones_row_v_t);
-                auto b_mat_v = matmul(b_lm, ones_row_v);  // [vocab_size x seq_len]
+                auto b_mat_v = matmul(b_lm, ones_row_v);
                 logits_v = add(logits_v, b_mat_v);
-                // Compute cross-entropy per time step
                 int V = (int)tokenizer.vocab_size();
                 std::vector<float> temp_grad(V);
                 for (int t = 0; t < seq_len; ++t) {
@@ -788,14 +697,12 @@ int main(int argc, char** argv) {
                 break;
             }
         }
-        // Display loss trends as sparkline
         std::cout << "Train trend: " << sparkline(loss_history) << "\n";
         if (!val_history.empty()) {
             std::cout << "Valid trend: " << sparkline(val_history) << "\n";
         }
     }
     std::cout << "Training complete.\n";
-    // If requested, dump post-training quantized model
     if (!ptq_out.empty()) {
         std::ofstream oq(ptq_out, std::ios::binary);
         if (!oq) {

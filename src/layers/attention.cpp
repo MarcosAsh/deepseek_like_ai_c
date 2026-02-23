@@ -20,7 +20,6 @@ MultiHeadAttention::MultiHeadAttention(int embed_dim_, int num_heads_, bool caus
     if (embed_dim % num_heads != 0) {
         throw std::invalid_argument("embed_dim must be divisible by num_heads");
     }
-    // Xavier initialization for weights
     std::random_device rd;
     std::mt19937 gen(rd());
     float range = std::sqrt(6.0f / (embed_dim + embed_dim));
@@ -36,7 +35,6 @@ void MultiHeadAttention::clear_cache() {
     v_cache = Tensor(embed_dim, 0);
 }
 
-// Helper: horizontally concatenate [rows x a_cols] and [rows x b_cols] -> [rows x (a_cols+b_cols)]
 static Tensor hcat(const Tensor& a, const Tensor& b) {
     int rows = a.rows;
     int new_cols = a.cols + b.cols;
@@ -51,17 +49,14 @@ static Tensor hcat(const Tensor& a, const Tensor& b) {
 }
 
 Tensor MultiHeadAttention::forward(const Tensor& input, bool training, bool use_cache) {
-    int q_len = input.cols;  // number of new query positions
-    // prepare RNG for dropout on attention weights
+    int q_len = input.cols;
     static thread_local std::mt19937 _rng(std::random_device{}());
     float _keep_prob = 1.0f - dropout_prob;
     std::bernoulli_distribution _dist(_keep_prob);
-    // Linear projections for new input
     Tensor Q = W_q.matmul(input); // [embed_dim x q_len]
     Tensor K_new = W_k.matmul(input);
     Tensor V_new = W_v.matmul(input);
 
-    // KV cache handling
     Tensor K_full = [&]() -> Tensor {
         if (use_cache && k_cache.cols > 0) return hcat(k_cache, K_new);
         return K_new;
@@ -75,20 +70,15 @@ Tensor MultiHeadAttention::forward(const Tensor& input, bool training, bool use_
         v_cache = V_full;
     }
 
-    int kv_len = K_full.cols;  // total key/value length (cached + new)
-    int pos_offset = kv_len - q_len;  // absolute position offset for causal masking
-
-    // Prepare output container
+    int kv_len = K_full.cols;
+    int pos_offset = kv_len - q_len;
     Tensor concat_out(embed_dim, q_len);
-    // Temp storage for scores and attention weights
     std::vector<float> score_mat(q_len * kv_len);
     std::vector<float> attn_weights(q_len * kv_len);
-    // Iterate over heads
     for (int h = 0; h < num_heads; ++h) {
         int offset = h * head_dim;
-        // Compute scaled dot-product scores: Q [head_dim x q_len] vs K [head_dim x kv_len]
         for (int i = 0; i < q_len; ++i) {
-            int abs_i = pos_offset + i;  // absolute position of this query
+            int abs_i = pos_offset + i;
             for (int j = 0; j < kv_len; ++j) {
                 float sum = 0.0f;
                 for (int d = 0; d < head_dim; ++d) {
@@ -97,13 +87,11 @@ Tensor MultiHeadAttention::forward(const Tensor& input, bool training, bool use_
                     sum += q * k;
                 }
                 float scaled = sum / std::sqrt((float)head_dim);
-                // causal mask: query at abs position abs_i cannot attend to key at position j > abs_i
                 if (causal && j > abs_i) {
                     scaled = -std::numeric_limits<float>::infinity();
                 }
                 score_mat[i * kv_len + j] = scaled;
             }
-            // Softmax over j for each i
             float max_score = score_mat[i * kv_len + 0];
             for (int j = 1; j < kv_len; ++j) {
                 max_score = std::max(max_score, score_mat[i * kv_len + j]);
@@ -117,7 +105,6 @@ Tensor MultiHeadAttention::forward(const Tensor& input, bool training, bool use_
             for (int j = 0; j < kv_len; ++j) {
                 attn_weights[i * kv_len + j] /= sum_exp;
             }
-            // Apply dropout to attention weights only during training
             if (training && dropout_prob > 0.0f) {
                 for (int j = 0; j < kv_len; ++j) {
                     bool keep = _dist(_rng);
@@ -126,7 +113,6 @@ Tensor MultiHeadAttention::forward(const Tensor& input, bool training, bool use_
                 }
             }
         }
-        // Compute head output [head_dim x q_len]
         for (int d = 0; d < head_dim; ++d) {
             for (int i = 0; i < q_len; ++i) {
                 float val = 0.0f;
@@ -138,7 +124,6 @@ Tensor MultiHeadAttention::forward(const Tensor& input, bool training, bool use_
             }
         }
     }
-    // Final output projection
     Tensor output = W_o.matmul(concat_out);
     return output;
 }

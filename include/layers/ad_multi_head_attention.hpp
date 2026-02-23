@@ -2,12 +2,9 @@
 #include "autodiff.hpp"
 #include <limits>
 
-// AD-aware Multi-Head Self-Attention
 class ADMultiHeadAttention {
 public:
-    // causal: if true, apply autoregressive masking (future positions get -inf)
     ADMultiHeadAttention(int embed_dim, int num_heads, bool causal = true);
-    // input: [embed_dim x seq_len]
     std::shared_ptr<ADTensor> forward(const std::shared_ptr<ADTensor>& input);
 
 private:

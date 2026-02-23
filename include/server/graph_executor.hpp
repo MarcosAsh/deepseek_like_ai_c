@@ -51,10 +51,8 @@ public:
 
     GraphResult execute(const GraphDef& graph);
 
-    // Parse graph definition from JSON
     static GraphDef parse_graph(const json& j);
 
-    // Serialize result to JSON
     static json result_to_json(const GraphResult& result);
 
 private:
@@ -65,7 +63,6 @@ private:
         const GraphDef& graph,
         std::string& error) const;
 
-    // Serialize a PortValue to JSON for the response
     json serialize_port_value(const PortValue& val) const;
 };
 

@@ -8,7 +8,6 @@
 class Tensor {
 public:
     int rows, cols;
-    // Tensor data stored via unified memory allocator (on-chip pool or host fallback)
     std::vector<float, UnifiedMemoryAllocator<float>> data;
 
     Tensor(int r, int c);
@@ -18,12 +17,10 @@ public:
     void print(const std::string& name = "")const;
 
     Tensor matmul(const Tensor& other) const;
-    // Return a transposed copy of this tensor
     Tensor transpose() const;
     float dot(const Tensor& other) const;
 
     Tensor operator+(const Tensor& other) const;
-    // Fast element accessors
     inline float& operator()(int i, int j) { return data[i * cols + j]; }
     inline const float& operator()(int i, int j) const { return data[i * cols + j]; }
 };

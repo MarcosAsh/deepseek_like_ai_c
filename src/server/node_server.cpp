@@ -15,7 +15,6 @@ void NodeServer::add_cors(httplib::Response& res) {
 }
 
 void NodeServer::setup_routes() {
-    // CORS preflight
     server_.Options(".*", [this](const httplib::Request&, httplib::Response& res) {
         add_cors(res);
         res.status = 204;
@@ -89,7 +88,6 @@ void NodeServer::handle_execute_node(const httplib::Request& req, httplib::Respo
 
         auto module = registry_.create(type, config);
 
-        // Parse inputs
         std::unordered_map<std::string, PortValue> inputs;
         for (auto& [key, val] : inputs_json.items()) {
             std::string port_type = val.value("type", "");
@@ -147,7 +145,6 @@ void NodeServer::handle_presets(const httplib::Request&, httplib::Response& res)
 json NodeServer::get_presets() {
     json presets = json::array();
 
-    // 1. Embedding + Positional Encoding (simplest graph)
     {
         json preset;
         preset["name"] = "Embedding + Positional Encoding";
@@ -171,7 +168,6 @@ json NodeServer::get_presets() {
         presets.push_back(preset);
     }
 
-    // 2. Single Attention Head
     {
         json preset;
         preset["name"] = "Single Attention Head";
@@ -190,7 +186,6 @@ json NodeServer::get_presets() {
         presets.push_back(preset);
     }
 
-    // 3. MoE Routing
     {
         json preset;
         preset["name"] = "MoE Routing";
@@ -207,7 +202,6 @@ json NodeServer::get_presets() {
         presets.push_back(preset);
     }
 
-    // 4. Full Transformer Block
     {
         json preset;
         preset["name"] = "Full Transformer Block";
@@ -231,7 +225,6 @@ json NodeServer::get_presets() {
         presets.push_back(preset);
     }
 
-    // 5. Full Training Pipeline
     {
         json preset;
         preset["name"] = "Full Training Pipeline";

@@ -3,7 +3,6 @@
 #include <string>
 #include <iostream>
 
-// Simple RAII timer that logs the duration of a scope to stderr.
 // Set Timer::enabled = true to activate output (off by default).
 class Timer {
 public:

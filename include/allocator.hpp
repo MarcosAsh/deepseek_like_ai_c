@@ -2,7 +2,6 @@
 #include <cstddef>
 #include "memory_pool.hpp"
 
-// Custom allocator that routes allocations through the unified memory manager
 template <typename T>
 struct UnifiedMemoryAllocator {
     using value_type = T;

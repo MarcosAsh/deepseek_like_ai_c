@@ -9,81 +9,57 @@ static bool almost_eq(float a, float b, float eps = 1e-4f) {
 }
 
 int main() {
-    // Test 1: TransformerBlock output shape
+    // single block: output shape matches input
     {
-        int input_dim = 16, hidden_dim = 32, n_heads = 4;
-        TransformerBlock block(input_dim, hidden_dim, n_heads);
-        Tensor input(input_dim, 4);  // seq_len=4
+        TransformerBlock block(16, 32, 4);
+        Tensor input(16, 4);
         for (auto& v : input.data) v = 0.1f;
         Tensor out = block.forward(input);
-        assert(out.rows == input_dim);
-        assert(out.cols == 4);
-        for (auto& v : out.data) {
-            assert(std::isfinite(v));
-        }
-        std::cout << "  [PASS] TransformerBlock output shape\n";
+        assert(out.rows == 16 && out.cols == 4);
+        for (auto& v : out.data) assert(std::isfinite(v));
     }
 
-    // Test 2: Transformer multi-layer forward
+    // multi-layer forward
     {
-        int num_layers = 3, input_dim = 16, hidden_dim = 32, n_heads = 4;
-        Transformer t(num_layers, input_dim, hidden_dim, n_heads);
-        Tensor input(input_dim, 3);
+        Transformer t(3, 16, 32, 4);
+        Tensor input(16, 3);
         for (auto& v : input.data) v = 0.5f;
         Tensor out = t.forward(input);
-        assert(out.rows == input_dim);
-        assert(out.cols == 3);
-        for (auto& v : out.data) {
-            assert(std::isfinite(v));
-        }
-        std::cout << "  [PASS] Transformer multi-layer forward\n";
+        assert(out.rows == 16 && out.cols == 3);
+        for (auto& v : out.data) assert(std::isfinite(v));
     }
 
-    // Test 3: Single token input
+    // single token
     {
-        int num_layers = 2, input_dim = 8, hidden_dim = 16, n_heads = 2;
-        Transformer t(num_layers, input_dim, hidden_dim, n_heads);
-        Tensor input(input_dim, 1);
+        Transformer t(2, 8, 16, 2);
+        Tensor input(8, 1);
         input.fill(1.0f);
         Tensor out = t.forward(input);
-        assert(out.rows == input_dim);
-        assert(out.cols == 1);
-        for (auto& v : out.data) {
-            assert(std::isfinite(v));
-        }
-        std::cout << "  [PASS] Transformer single token\n";
+        assert(out.rows == 8 && out.cols == 1);
+        for (auto& v : out.data) assert(std::isfinite(v));
     }
 
-    // Test 4: Transformer with cache clear
+    // forward -> clear_cache -> forward doesn't crash
     {
-        int num_layers = 2, input_dim = 8, hidden_dim = 16, n_heads = 2;
-        Transformer t(num_layers, input_dim, hidden_dim, n_heads);
-        Tensor input(input_dim, 2);
+        Transformer t(2, 8, 16, 2);
+        Tensor input(8, 2);
         for (auto& v : input.data) v = 0.3f;
-
-        // Run forward, clear cache, run again - should not crash
         t.forward(input, false, true);
         t.clear_cache();
         Tensor out = t.forward(input);
-        assert(out.rows == input_dim);
-        assert(out.cols == 2);
-        std::cout << "  [PASS] Transformer cache clear\n";
+        assert(out.rows == 8 && out.cols == 2);
     }
 
-    // Test 5: Deterministic inference
+    // inference is deterministic
     {
-        int num_layers = 2, input_dim = 8, hidden_dim = 16, n_heads = 2;
-        Transformer t(num_layers, input_dim, hidden_dim, n_heads);
-        Tensor input(input_dim, 3);
+        Transformer t(2, 8, 16, 2);
+        Tensor input(8, 3);
         for (int i = 0; i < (int)input.data.size(); ++i)
             input.data[i] = (float)(i % 5) * 0.1f;
-
         Tensor out1 = t.forward(input, false);
         Tensor out2 = t.forward(input, false);
-        for (size_t i = 0; i < out1.data.size(); ++i) {
+        for (size_t i = 0; i < out1.data.size(); ++i)
             assert(almost_eq(out1.data[i], out2.data[i]));
-        }
-        std::cout << "  [PASS] Deterministic inference\n";
     }
 
     std::cout << "All Transformer tests passed." << std::endl;

@@ -16,7 +16,6 @@
 
 namespace server {
 
-// Helper to get a value from inputs with type checking
 template<typename T>
 T get_input(const std::unordered_map<std::string, PortValue>& inputs,
             const std::string& name) {
@@ -27,8 +26,6 @@ T get_input(const std::unordered_map<std::string, PortValue>& inputs,
         throw std::runtime_error("Type mismatch for input: " + name);
     return std::get<T>(it->second);
 }
-
-// ======================== TokenizerWrapper ========================
 
 class TokenizerWrapper : public ModuleWrapper {
     std::unique_ptr<Tokenizer> tok;
@@ -65,8 +62,6 @@ public:
         return {{"tokens", PortValue(tokens)}};
     }
 };
-
-// ======================== ADEmbeddingWrapper ========================
 
 class ADEmbeddingWrapper : public ModuleWrapper {
     std::unique_ptr<ADEmbedding> emb;
@@ -106,8 +101,6 @@ public:
     }
 };
 
-// ======================== ADPosEncWrapper ========================
-
 class ADPosEncWrapper : public ModuleWrapper {
     std::unique_ptr<ADPositionalEncoding> pe;
     int embed_dim, max_len;
@@ -139,8 +132,6 @@ public:
         return {{"output", PortValue(out)}};
     }
 };
-
-// ======================== ADLayerNormWrapper ========================
 
 class ADLayerNormWrapper : public ModuleWrapper {
     std::unique_ptr<ADLayerNorm> ln;
@@ -175,8 +166,6 @@ public:
     }
 };
 
-// ======================== ADMHAWrapper ========================
-
 class ADMHAWrapper : public ModuleWrapper {
     std::unique_ptr<ADMultiHeadAttention> mha;
     int embed_dim, num_heads;
@@ -209,8 +198,6 @@ public:
     }
 };
 
-// ======================== ADFeedForwardWrapper ========================
-
 class ADFeedForwardWrapper : public ModuleWrapper {
     std::unique_ptr<ADFeedForward> ff;
     int embed_dim, hidden_dim;
@@ -242,8 +229,6 @@ public:
         return {{"output", PortValue(out)}};
     }
 };
-
-// ======================== ADMoEWrapper ========================
 
 class ADMoEWrapper : public ModuleWrapper {
     std::unique_ptr<ADMoE> moe;
@@ -286,8 +271,6 @@ public:
     }
 };
 
-// ======================== ADLinearWrapper ========================
-
 class ADLinearWrapper : public ModuleWrapper {
     std::unique_ptr<ADLinear> linear;
     int input_dim, output_dim;
@@ -319,8 +302,6 @@ public:
         return {{"output", PortValue(out)}};
     }
 };
-
-// ======================== ADTransBlockWrapper ========================
 
 class ADTransBlockWrapper : public ModuleWrapper {
     std::unique_ptr<ADTransformerBlock> block;
@@ -362,8 +343,6 @@ public:
     }
 };
 
-// ======================== AddWrapper ========================
-
 class AddWrapper : public ModuleWrapper {
 public:
     AddWrapper(const json&) {}
@@ -389,8 +368,6 @@ public:
         return {{"output", PortValue(out)}};
     }
 };
-
-// ======================== MatMulWrapper ========================
 
 class MatMulWrapper : public ModuleWrapper {
 public:
@@ -418,8 +395,6 @@ public:
     }
 };
 
-// ======================== TransposeWrapper ========================
-
 class TransposeWrapper : public ModuleWrapper {
 public:
     TransposeWrapper(const json&) {}
@@ -444,8 +419,6 @@ public:
         return {{"output", PortValue(out)}};
     }
 };
-
-// ======================== CrossEntropyWrapper ========================
 
 class CrossEntropyWrapper : public ModuleWrapper {
 public:
@@ -472,11 +445,9 @@ public:
         auto logits = get_input<std::shared_ptr<ADTensor>>(inputs, "logits");
         auto targets = get_input<std::vector<int>>(inputs, "targets");
 
-        // logits: [vocab_size x seq_len], targets: length seq_len
         int vocab_size = logits->val.rows;
         int seq_len = logits->val.cols;
 
-        // Build one-hot target tensor [vocab_size x seq_len]
         Tensor target_tensor(vocab_size, seq_len);
         target_tensor.fill(0.0f);
         for (int t = 0; t < seq_len && t < static_cast<int>(targets.size()); t++) {
@@ -486,8 +457,7 @@ public:
         }
         auto target_ad = make_ad(target_tensor);
 
-        // Log-sum-exp for numerical stability
-        // max per column
+        // log-sum-exp for numerical stability
         Tensor max_vals(1, seq_len);
         for (int j = 0; j < seq_len; j++) {
             float mx = logits->val(0, j);
@@ -496,26 +466,21 @@ public:
             max_vals(0, j) = mx;
         }
 
-        // Broadcast max and subtract
         Tensor ones_col(vocab_size, 1);
         ones_col.fill(1.0f);
         auto max_ad = make_ad(ones_col.matmul(max_vals));
         auto shifted = sub(logits, max_ad);
         auto exp_vals = exp_ad(shifted);
 
-        // Sum exp per column
         Tensor ones_row(1, vocab_size);
         ones_row.fill(1.0f);
         auto ones_ad = make_ad(ones_row);
-        auto sum_exp = matmul(ones_ad, exp_vals); // [1 x seq_len]
+        auto sum_exp = matmul(ones_ad, exp_vals);
 
-        auto log_sum = log_ad(sum_exp); // [1 x seq_len]
-
-        // log_probs = shifted - log_sum (broadcast)
-        auto log_sum_broadcast = matmul(make_ad(ones_col), log_sum); // [vocab x seq_len]
+        auto log_sum = log_ad(sum_exp);
+        auto log_sum_broadcast = matmul(make_ad(ones_col), log_sum);
         auto log_probs = sub(shifted, log_sum_broadcast);
 
-        // loss = -sum(target * log_probs) / seq_len
         auto target_log_probs = mul(target_ad, log_probs);
         auto total = sum(target_log_probs);
         auto neg_loss = scalar_mul(total, -1.0f / static_cast<float>(seq_len));
@@ -523,8 +488,6 @@ public:
         return {{"loss", PortValue(neg_loss)}};
     }
 };
-
-// ======================== BackwardWrapper ========================
 
 class BackwardWrapper : public ModuleWrapper {
 public:
@@ -551,8 +514,6 @@ public:
     }
 };
 
-// ======================== TextInputWrapper ========================
-
 class TextInputWrapper : public ModuleWrapper {
     std::string text;
 public:
@@ -578,8 +539,6 @@ public:
     }
 };
 
-// ======================== IntInputWrapper ========================
-
 class IntInputWrapper : public ModuleWrapper {
     int value;
 public:
@@ -604,8 +563,6 @@ public:
         return {{"value", PortValue(value)}};
     }
 };
-
-// ======================== TokenIDsInputWrapper ========================
 
 class TokenIDsInputWrapper : public ModuleWrapper {
     std::vector<int> tokens;
@@ -637,8 +594,6 @@ public:
     }
 };
 
-// ======================== SeqLenExtractor ========================
-
 class SeqLenExtractorWrapper : public ModuleWrapper {
 public:
     SeqLenExtractorWrapper(const json&) {}
@@ -664,8 +619,6 @@ public:
 };
 
 } // namespace server
-
-// ======================== Registration helpers ========================
 
 #include "server/module_registry.hpp"
 

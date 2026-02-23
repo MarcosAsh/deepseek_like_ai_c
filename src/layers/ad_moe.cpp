@@ -6,7 +6,6 @@
 
 ADMoE::ADMoE(int embed_dim_, int hidden_dim, int num_experts_, int top_k_)
     : embed_dim(embed_dim_), num_experts(num_experts_), top_k(top_k_) {
-    // Initialize gate weights
     Tensor tW(num_experts, embed_dim);
     Tensor tb(num_experts, 1);
     std::mt19937 gen(std::random_device{}());
@@ -17,7 +16,6 @@ ADMoE::ADMoE(int embed_dim_, int hidden_dim, int num_experts_, int top_k_)
     gate_W = make_ad(tW); register_parameter(gate_W);
     gate_b = make_ad(tb); register_parameter(gate_b);
 
-    // Initialize expert FF networks
     experts.reserve(num_experts);
     for (int i = 0; i < num_experts; ++i) {
         experts.emplace_back(embed_dim, hidden_dim);
@@ -27,17 +25,14 @@ ADMoE::ADMoE(int embed_dim_, int hidden_dim, int num_experts_, int top_k_)
 ADMoE::MoEOutput ADMoE::forward(const std::shared_ptr<ADTensor>& x) {
     int seq_len = x->val.cols;
 
-    // Gate logits: [num_experts x seq_len]
     auto gate_logits = matmul(gate_W, x);
-    // Broadcast gate bias
     Tensor ones_t(1, seq_len);
     ones_t.data.assign(seq_len, 1.0f);
     auto ones = make_ad(ones_t);
     auto b_broad = matmul(gate_b, ones);
     gate_logits = add(gate_logits, b_broad);
 
-    // Softmax over experts (row-wise: each column is a distribution over experts)
-    // Row-wise max for stability
+    // softmax over experts per position
     Tensor row_max_t(1, seq_len);
     for (int j = 0; j < seq_len; ++j) {
         float mx = gate_logits->val(0, j);
@@ -45,7 +40,6 @@ ADMoE::MoEOutput ADMoE::forward(const std::shared_ptr<ADTensor>& x) {
             mx = std::max(mx, gate_logits->val(e, j));
         row_max_t.data[j] = mx;
     }
-    // Broadcast max: [num_experts x seq_len]
     Tensor ones_e(num_experts, 1);
     ones_e.data.assign(num_experts, 1.0f);
     auto ones_e_ad = make_ad(ones_e);
@@ -54,7 +48,6 @@ ADMoE::MoEOutput ADMoE::forward(const std::shared_ptr<ADTensor>& x) {
     auto shifted = sub(gate_logits, max_broad);
     auto exp_vals = exp_ad(shifted);
 
-    // Sum over experts per position
     Tensor ones_sum_t(1, num_experts);
     ones_sum_t.data.assign(num_experts, 1.0f);
     auto ones_sum = make_ad(ones_sum_t);
@@ -63,12 +56,7 @@ ADMoE::MoEOutput ADMoE::forward(const std::shared_ptr<ADTensor>& x) {
     auto denom_inv = reciprocal(denom_broad);
     auto gate_probs = mul(exp_vals, denom_inv);  // [num_experts x seq_len]
 
-    // For differentiable routing: compute all expert outputs, weight by gate_probs
-    // This is the soft MoE approach (all experts process all tokens, weighted by gate)
-    // For efficiency, we use top-k masking to zero out non-selected experts
-
-    // Top-k mask: for each position, keep only top_k expert probabilities
-    // Create mask from forward values (constant, no gradient needed)
+    // top-k mask: zero out non-selected experts
     Tensor mask_t(num_experts, seq_len);
     mask_t.fill(0.0f);
     for (int j = 0; j < seq_len; ++j) {
@@ -85,24 +73,20 @@ ADMoE::MoEOutput ADMoE::forward(const std::shared_ptr<ADTensor>& x) {
     auto mask_ad = make_ad(mask_t);
     auto masked_probs = mul(gate_probs, mask_ad);  // zero out non-top-k
 
-    // Renormalize masked probs per position
-    auto masked_sum = matmul(ones_sum, masked_probs);  // [1 x seq_len]
-    auto masked_sum_broad = matmul(ones_e_ad, masked_sum);  // [num_experts x seq_len]
+    auto masked_sum = matmul(ones_sum, masked_probs);
+    auto masked_sum_broad = matmul(ones_e_ad, masked_sum);
     auto masked_sum_inv = reciprocal(masked_sum_broad);
-    auto routing_weights = mul(masked_probs, masked_sum_inv);  // [num_experts x seq_len]
+    auto routing_weights = mul(masked_probs, masked_sum_inv);
 
-    // Compute weighted combination of expert outputs
-    // output = sum_e routing_weights[e,:] * expert_e(x)
+    // weighted combination of expert outputs
     std::shared_ptr<ADTensor> output = nullptr;
     for (int e = 0; e < num_experts; ++e) {
-        auto expert_out = experts[e].forward(x);  // [embed_dim x seq_len]
-        // Extract routing weight for this expert: [1 x seq_len]
-        auto w_e = slice(routing_weights, e, 1);  // [1 x seq_len]
-        // Broadcast to [embed_dim x seq_len]
+        auto expert_out = experts[e].forward(x);
+        auto w_e = slice(routing_weights, e, 1);
         Tensor ones_dim_t(embed_dim, 1);
         ones_dim_t.data.assign(embed_dim, 1.0f);
         auto ones_dim = make_ad(ones_dim_t);
-        auto w_broad = matmul(ones_dim, w_e);  // [embed_dim x seq_len]
+        auto w_broad = matmul(ones_dim, w_e);
         auto weighted = mul(expert_out, w_broad);
         if (output == nullptr) {
             output = weighted;
@@ -111,8 +95,7 @@ ADMoE::MoEOutput ADMoE::forward(const std::shared_ptr<ADTensor>& x) {
         }
     }
 
-    // Auxiliary load-balancing loss: num_experts * sum_e(f_e^2) where f_e = mean routing weight
-    // f_e = (1/seq_len) * sum_j routing_weights[e, j]
+    // load-balancing aux loss: num_experts * sum(f_e^2)
     Tensor ones_seq_t(seq_len, 1);
     ones_seq_t.data.assign(seq_len, 1.0f);
     auto ones_seq = make_ad(ones_seq_t);
