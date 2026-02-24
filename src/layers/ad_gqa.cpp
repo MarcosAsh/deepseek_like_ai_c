@@ -1,0 +1,119 @@
+#include "layers/ad_gqa.hpp"
+#include <random>
+#include <stdexcept>
+#include <cmath>
+#include <limits>
+
+ADGQA::ADGQA(int embed_dim_, int num_heads_, int num_kv_heads_, bool causal_)
+    : embed_dim(embed_dim_), num_heads(num_heads_), num_kv_heads(num_kv_heads_), causal(causal_) {
+    if (embed_dim % num_heads != 0) {
+        throw std::invalid_argument("embed_dim must be divisible by num_heads");
+    }
+    if (num_heads % num_kv_heads != 0) {
+        throw std::invalid_argument("num_heads must be divisible by num_kv_heads");
+    }
+    head_dim = embed_dim / num_heads;
+    kv_group_size = num_heads / num_kv_heads;
+
+    // ALiBi slopes
+    alibi_slopes.resize(num_heads);
+    for (int h = 0; h < num_heads; ++h) {
+        alibi_slopes[h] = std::pow(2.0f, -8.0f * static_cast<float>(h + 1) / static_cast<float>(num_heads));
+    }
+
+    int kv_dim = num_kv_heads * head_dim;
+
+    // Q projects to full embed_dim, K/V project to kv_dim (smaller)
+    Tensor tWq(embed_dim, embed_dim), tWk(kv_dim, embed_dim),
+           tWv(kv_dim, embed_dim), tWo(embed_dim, embed_dim);
+
+    std::mt19937 gen(std::random_device{}());
+    float range_q = std::sqrt(6.0f / (2 * embed_dim));
+    float range_kv = std::sqrt(6.0f / (embed_dim + kv_dim));
+    std::uniform_real_distribution<float> dist_q(-range_q, range_q);
+    std::uniform_real_distribution<float> dist_kv(-range_kv, range_kv);
+
+    for (auto& v : tWq.data) v = dist_q(gen);
+    for (auto& v : tWk.data) v = dist_kv(gen);
+    for (auto& v : tWv.data) v = dist_kv(gen);
+    for (auto& v : tWo.data) v = dist_q(gen);
+
+    W_q = make_ad(tWq); register_parameter(W_q);
+    W_k = make_ad(tWk); register_parameter(W_k);
+    W_v = make_ad(tWv); register_parameter(W_v);
+    W_o = make_ad(tWo); register_parameter(W_o);
+}
+
+std::shared_ptr<ADTensor> ADGQA::forward(const std::shared_ptr<ADTensor>& input) {
+    auto Q = matmul(W_q, input);  // [embed_dim x seq_len]
+    auto K = matmul(W_k, input);  // [kv_dim x seq_len]
+    auto V = matmul(W_v, input);  // [kv_dim x seq_len]
+
+    int seq_len = input->val.cols;
+    std::vector<std::shared_ptr<ADTensor>> heads;
+    heads.reserve(num_heads);
+
+    for (int h = 0; h < num_heads; ++h) {
+        int q_offset = h * head_dim;
+        // KV head index: multiple Q heads share the same KV head
+        int kv_head = h / kv_group_size;
+        int kv_offset = kv_head * head_dim;
+
+        auto Qh = slice(Q, q_offset, head_dim);
+        auto Kh = slice(K, kv_offset, head_dim);
+        auto Vh = slice(V, kv_offset, head_dim);
+
+        auto Qh_T = transpose(Qh);
+        auto scores = matmul(Qh_T, Kh);
+        float scale = 1.0f / std::sqrt((float)head_dim);
+        auto scores_scaled = scalar_mul(scores, scale);
+
+        // ALiBi bias + causal mask
+        {
+            Tensor bias_t(seq_len, seq_len);
+            for (int i = 0; i < seq_len; ++i) {
+                for (int j = 0; j < seq_len; ++j) {
+                    if (causal && j > i) {
+                        bias_t.data[i * seq_len + j] = -std::numeric_limits<float>::infinity();
+                    } else {
+                        bias_t.data[i * seq_len + j] = -std::abs(j - i) * alibi_slopes[h];
+                    }
+                }
+            }
+            auto bias_ad = make_ad(bias_t);
+            scores_scaled = add(scores_scaled, bias_ad);
+        }
+
+        // Row-wise softmax
+        Tensor row_max_t(seq_len, 1);
+        for (int i = 0; i < seq_len; ++i) {
+            float mx = scores_scaled->val.data[i * seq_len];
+            for (int j = 1; j < seq_len; ++j) {
+                mx = std::max(mx, scores_scaled->val.data[i * seq_len + j]);
+            }
+            row_max_t.data[i] = mx;
+        }
+        Tensor ones_row_t(1, seq_len);
+        for (int j = 0; j < seq_len; ++j) ones_row_t.data[j] = 1.0f;
+        auto ones_row = make_ad(ones_row_t);
+        auto row_max_ad = make_ad(row_max_t);
+        auto max_broadcast = matmul(row_max_ad, ones_row);
+        auto scores_shifted = sub(scores_scaled, max_broadcast);
+        auto scores_exp = exp_ad(scores_shifted);
+
+        Tensor ones_col_t(seq_len, 1);
+        for (int i = 0; i < seq_len; ++i) ones_col_t.data[i] = 1.0f;
+        auto ones_col = make_ad(ones_col_t);
+        auto denom_col = matmul(scores_exp, ones_col);
+        auto denom = matmul(denom_col, ones_row);
+        auto denom_recip = reciprocal(denom);
+        auto attn = mul(scores_exp, denom_recip);
+        auto attn_T = transpose(attn);
+        auto head_out = matmul(Vh, attn_T);
+        heads.push_back(head_out);
+    }
+
+    auto concat_out = concat(heads);
+    auto out = matmul(W_o, concat_out);
+    return out;
+}

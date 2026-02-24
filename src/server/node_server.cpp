@@ -259,6 +259,146 @@ json NodeServer::get_presets() {
         presets.push_back(preset);
     }
 
+    // --- New presets ---
+
+    {
+        json preset;
+        preset["name"] = "GQA Attention";
+        preset["description"] = "Grouped Query Attention: fewer KV heads than Q heads for memory-efficient attention";
+        preset["nodes"] = json::array({
+            {{"id", "tokens_in"}, {"type", "TokenIDsInput"}, {"config", {{"tokens", {1,2,3,4,5,6,7,8}}}}},
+            {{"id", "embedding"}, {"type", "ADEmbedding"}, {"config", {{"vocab_size", 256}, {"embed_dim", 64}}}},
+            {{"id", "ln"}, {"type", "ADLayerNorm"}, {"config", {{"dim", 64}}}},
+            {{"id", "gqa"}, {"type", "ADGQA"}, {"config", {{"embed_dim", 64}, {"num_heads", 8}, {"num_kv_heads", 2}}}}
+        });
+        preset["edges"] = json::array({
+            {{"source_node", "tokens_in"}, {"source_port", "tokens"}, {"target_node", "embedding"}, {"target_port", "tokens"}},
+            {{"source_node", "embedding"}, {"source_port", "output"}, {"target_node", "ln"}, {"target_port", "input"}},
+            {{"source_node", "ln"}, {"source_port", "output"}, {"target_node", "gqa"}, {"target_port", "input"}}
+        });
+        presets.push_back(preset);
+    }
+
+    {
+        json preset;
+        preset["name"] = "LoRA Fine-Tuning Layer";
+        preset["description"] = "Low-Rank Adaptation: parameter-efficient fine-tuning with frozen base weights and trainable low-rank matrices";
+        preset["nodes"] = json::array({
+            {{"id", "tokens_in"}, {"type", "TokenIDsInput"}, {"config", {{"tokens", {1,2,3,4,5,6,7,8}}}}},
+            {{"id", "embedding"}, {"type", "ADEmbedding"}, {"config", {{"vocab_size", 256}, {"embed_dim", 64}}}},
+            {{"id", "lora"}, {"type", "ADLoRA"}, {"config", {{"input_dim", 64}, {"output_dim", 64}, {"rank", 8}, {"alpha", 8.0}}}}
+        });
+        preset["edges"] = json::array({
+            {{"source_node", "tokens_in"}, {"source_port", "tokens"}, {"target_node", "embedding"}, {"target_port", "tokens"}},
+            {{"source_node", "embedding"}, {"source_port", "output"}, {"target_node", "lora"}, {"target_port", "input"}}
+        });
+        presets.push_back(preset);
+    }
+
+    {
+        json preset;
+        preset["name"] = "Flash Attention Pipeline";
+        preset["description"] = "Memory-efficient tiled attention: same output as standard attention but uses less peak memory";
+        preset["nodes"] = json::array({
+            {{"id", "tokens_in"}, {"type", "TokenIDsInput"}, {"config", {{"tokens", {1,2,3,4,5,6,7,8}}}}},
+            {{"id", "embedding"}, {"type", "ADEmbedding"}, {"config", {{"vocab_size", 256}, {"embed_dim", 64}}}},
+            {{"id", "rmsnorm"}, {"type", "ADRMSNorm"}, {"config", {{"dim", 64}}}},
+            {{"id", "flash"}, {"type", "ADFlashAttention"}, {"config", {{"embed_dim", 64}, {"num_heads", 4}, {"tile_size", 4}}}}
+        });
+        preset["edges"] = json::array({
+            {{"source_node", "tokens_in"}, {"source_port", "tokens"}, {"target_node", "embedding"}, {"target_port", "tokens"}},
+            {{"source_node", "embedding"}, {"source_port", "output"}, {"target_node", "rmsnorm"}, {"target_port", "input"}},
+            {{"source_node", "rmsnorm"}, {"source_port", "output"}, {"target_node", "flash"}, {"target_port", "input"}}
+        });
+        presets.push_back(preset);
+    }
+
+    {
+        json preset;
+        preset["name"] = "Weight Tying Pipeline";
+        preset["description"] = "Share embedding weights with output projection: fewer parameters and better generalization";
+        preset["nodes"] = json::array({
+            {{"id", "tokens_in"}, {"type", "TokenIDsInput"}, {"config", {{"tokens", {1,2,3,4,5,6,7,8}}}}},
+            {{"id", "embedding"}, {"type", "ADEmbedding"}, {"config", {{"vocab_size", 256}, {"embed_dim", 64}}}},
+            {{"id", "transformer"}, {"type", "ADTransformerBlock"}, {"config", {{"embed_dim", 64}, {"hidden_dim", 256}, {"n_heads", 4}}}},
+            {{"id", "weight_tie"}, {"type", "ADWeightTying"}, {"config", json::object()}}
+        });
+        preset["edges"] = json::array({
+            {{"source_node", "tokens_in"}, {"source_port", "tokens"}, {"target_node", "embedding"}, {"target_port", "tokens"}},
+            {{"source_node", "embedding"}, {"source_port", "output"}, {"target_node", "transformer"}, {"target_port", "input"}},
+            {{"source_node", "transformer"}, {"source_port", "output"}, {"target_node", "weight_tie"}, {"target_port", "input"}},
+            {{"source_node", "embedding"}, {"source_port", "weights"}, {"target_node", "weight_tie"}, {"target_port", "weights"}}
+        });
+        presets.push_back(preset);
+    }
+
+    {
+        json preset;
+        preset["name"] = "SwiGLU + RMSNorm Block";
+        preset["description"] = "Modern LLM architecture: RMS normalization with SwiGLU gated feed-forward (LLaMA-style)";
+        preset["nodes"] = json::array({
+            {{"id", "tokens_in"}, {"type", "TokenIDsInput"}, {"config", {{"tokens", {1,2,3,4,5,6,7,8}}}}},
+            {{"id", "embedding"}, {"type", "ADEmbedding"}, {"config", {{"vocab_size", 256}, {"embed_dim", 64}}}},
+            {{"id", "rmsnorm"}, {"type", "ADRMSNorm"}, {"config", {{"dim", 64}}}},
+            {{"id", "swiglu"}, {"type", "ADSwiGLU"}, {"config", {{"embed_dim", 64}, {"hidden_dim", 128}}}},
+            {{"id", "residual"}, {"type", "Add"}, {"config", json::object()}}
+        });
+        preset["edges"] = json::array({
+            {{"source_node", "tokens_in"}, {"source_port", "tokens"}, {"target_node", "embedding"}, {"target_port", "tokens"}},
+            {{"source_node", "embedding"}, {"source_port", "output"}, {"target_node", "rmsnorm"}, {"target_port", "input"}},
+            {{"source_node", "rmsnorm"}, {"source_port", "output"}, {"target_node", "swiglu"}, {"target_port", "input"}},
+            {{"source_node", "swiglu"}, {"source_port", "output"}, {"target_node", "residual"}, {"target_port", "a"}},
+            {{"source_node", "embedding"}, {"source_port", "output"}, {"target_node", "residual"}, {"target_port", "b"}}
+        });
+        presets.push_back(preset);
+    }
+
+    {
+        json preset;
+        preset["name"] = "RoPE Attention";
+        preset["description"] = "Rotary Position Embeddings: apply rotation-based positional encoding before attention";
+        preset["nodes"] = json::array({
+            {{"id", "tokens_in"}, {"type", "TokenIDsInput"}, {"config", {{"tokens", {1,2,3,4,5,6,7,8}}}}},
+            {{"id", "embedding"}, {"type", "ADEmbedding"}, {"config", {{"vocab_size", 256}, {"embed_dim", 64}}}},
+            {{"id", "rope"}, {"type", "RoPE"}, {"config", {{"head_dim", 64}}}},
+            {{"id", "attention"}, {"type", "ADMultiHeadAttention"}, {"config", {{"embed_dim", 64}, {"num_heads", 4}}}}
+        });
+        preset["edges"] = json::array({
+            {{"source_node", "tokens_in"}, {"source_port", "tokens"}, {"target_node", "embedding"}, {"target_port", "tokens"}},
+            {{"source_node", "embedding"}, {"source_port", "output"}, {"target_node", "rope"}, {"target_port", "input"}},
+            {{"source_node", "rope"}, {"source_port", "output"}, {"target_node", "attention"}, {"target_port", "input"}}
+        });
+        presets.push_back(preset);
+    }
+
+    {
+        json preset;
+        preset["name"] = "DeepSeek-Style Block";
+        preset["description"] = "DeepSeek-inspired: GQA + MoE + RMSNorm, combining efficient attention with sparse expert routing";
+        preset["nodes"] = json::array({
+            {{"id", "tokens_in"}, {"type", "TokenIDsInput"}, {"config", {{"tokens", {1,2,3,4,5,6,7,8}}}}},
+            {{"id", "embedding"}, {"type", "ADEmbedding"}, {"config", {{"vocab_size", 256}, {"embed_dim", 64}}}},
+            {{"id", "rn1"}, {"type", "ADRMSNorm"}, {"config", {{"dim", 64}}}},
+            {{"id", "gqa"}, {"type", "ADGQA"}, {"config", {{"embed_dim", 64}, {"num_heads", 8}, {"num_kv_heads", 2}}}},
+            {{"id", "res1"}, {"type", "Add"}, {"config", json::object()}},
+            {{"id", "rn2"}, {"type", "ADRMSNorm"}, {"config", {{"dim", 64}}}},
+            {{"id", "moe"}, {"type", "ADMoE"}, {"config", {{"embed_dim", 64}, {"hidden_dim", 128}, {"num_experts", 4}, {"top_k", 2}}}},
+            {{"id", "res2"}, {"type", "Add"}, {"config", json::object()}}
+        });
+        preset["edges"] = json::array({
+            {{"source_node", "tokens_in"}, {"source_port", "tokens"}, {"target_node", "embedding"}, {"target_port", "tokens"}},
+            {{"source_node", "embedding"}, {"source_port", "output"}, {"target_node", "rn1"}, {"target_port", "input"}},
+            {{"source_node", "rn1"}, {"source_port", "output"}, {"target_node", "gqa"}, {"target_port", "input"}},
+            {{"source_node", "gqa"}, {"source_port", "output"}, {"target_node", "res1"}, {"target_port", "a"}},
+            {{"source_node", "embedding"}, {"source_port", "output"}, {"target_node", "res1"}, {"target_port", "b"}},
+            {{"source_node", "res1"}, {"source_port", "output"}, {"target_node", "rn2"}, {"target_port", "input"}},
+            {{"source_node", "rn2"}, {"source_port", "output"}, {"target_node", "moe"}, {"target_port", "input"}},
+            {{"source_node", "moe"}, {"source_port", "output"}, {"target_node", "res2"}, {"target_port", "a"}},
+            {{"source_node", "res1"}, {"source_port", "output"}, {"target_node", "res2"}, {"target_port", "b"}}
+        });
+        presets.push_back(preset);
+    }
+
     return {{"presets", presets}};
 }
 

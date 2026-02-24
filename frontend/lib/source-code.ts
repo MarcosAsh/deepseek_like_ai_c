@@ -72,6 +72,38 @@ export const MODULE_SOURCE_FILES: Record<string, { src: string[]; include: strin
     src: ["src/server/module_wrappers.cpp"],
     include: ["include/server/module_wrapper.hpp"],
   },
+  ADRMSNorm: {
+    src: ["src/layers/ad_rmsnorm.cpp"],
+    include: ["include/layers/ad_rmsnorm.hpp"],
+  },
+  ADSwiGLU: {
+    src: ["src/layers/ad_swiglu.cpp"],
+    include: ["include/layers/ad_swiglu.hpp"],
+  },
+  RoPE: {
+    src: ["src/layers/rope.cpp"],
+    include: ["include/layers/rope.hpp"],
+  },
+  ADGQA: {
+    src: ["src/layers/ad_gqa.cpp"],
+    include: ["include/layers/ad_gqa.hpp"],
+  },
+  ADLoRA: {
+    src: ["src/layers/ad_lora.cpp"],
+    include: ["include/layers/ad_lora.hpp"],
+  },
+  ADFlashAttention: {
+    src: ["src/layers/ad_flash_attention.cpp"],
+    include: ["include/layers/ad_flash_attention.hpp"],
+  },
+  ADWeightTying: {
+    src: ["src/layers/ad_weight_tying.cpp"],
+    include: ["include/layers/ad_weight_tying.hpp"],
+  },
+  ADRepetitionPenalty: {
+    src: ["src/layers/ad_repetition_penalty.cpp"],
+    include: ["include/layers/ad_repetition_penalty.hpp"],
+  },
 };
 
 // Get the public URL path for a source file

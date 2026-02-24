@@ -229,4 +229,157 @@ export const MODULE_DOCS: Record<string, string> = {
     </ol>
     <p>After execution, all AD tensors in the graph will have their <code>.grad</code> field populated.</p>
   `,
+
+  ADRMSNorm: `
+    <h2>RMS Normalization</h2>
+    <p>Root Mean Square Layer Normalization, used in modern LLMs like LLaMA and DeepSeek. Unlike standard LayerNorm, it does not center activations (no mean subtraction), making it simpler and faster.</p>
+    <h3>Formula</h3>
+    <p><code>RMSNorm(x) = gamma * x / sqrt(mean(x^2) + eps)</code></p>
+    <h3>Parameters</h3>
+    <ul>
+      <li><strong>dim</strong>: Feature dimension to normalize over</li>
+      <li><strong>eps</strong>: Small constant for numerical stability (default: 1e-6)</li>
+    </ul>
+    <h3>Key Insight</h3>
+    <p>RMSNorm is computationally cheaper than LayerNorm and works equally well in practice. It has become the standard normalization in modern transformer architectures.</p>
+  `,
+
+  ADSwiGLU: `
+    <h2>SwiGLU Feed-Forward Network</h2>
+    <p>A gated feed-forward network using the Swish activation function as a gate. Used in LLaMA, PaLM, and other modern LLMs as a replacement for the standard GELU FFN.</p>
+    <h3>Architecture</h3>
+    <p><code>SwiGLU(x) = W_down * (Swish(W_gate * x) * (W_up * x))</code></p>
+    <ol>
+      <li><strong>Gate path</strong>: Project through W_gate and apply Swish activation</li>
+      <li><strong>Up path</strong>: Project through W_up (linear)</li>
+      <li><strong>Element-wise multiply</strong>: Gate controls information flow</li>
+      <li><strong>Down projection</strong>: Project back to embed_dim</li>
+    </ol>
+    <h3>Parameters</h3>
+    <ul>
+      <li><strong>embed_dim</strong>: Input/output dimension</li>
+      <li><strong>hidden_dim</strong>: Intermediate dimension</li>
+    </ul>
+    <h3>Key Insight</h3>
+    <p>The gating mechanism allows the network to learn which features to pass through, often outperforming standard GELU FFNs with the same parameter count.</p>
+  `,
+
+  RoPE: `
+    <h2>Rotary Position Embedding (RoPE)</h2>
+    <p>Encodes position information by rotating embedding vectors. Used in LLaMA, DeepSeek, and most modern LLMs as a replacement for absolute positional encodings.</p>
+    <h3>How it works</h3>
+    <ol>
+      <li>Pairs adjacent dimensions and treats them as 2D vectors</li>
+      <li>Rotates each pair by an angle proportional to the position and dimension index</li>
+      <li>Lower dimensions rotate slowly (capture long-range patterns), higher dimensions rotate quickly (capture local patterns)</li>
+    </ol>
+    <h3>Parameters</h3>
+    <ul>
+      <li><strong>head_dim</strong>: Dimension of each attention head (must be even)</li>
+      <li><strong>max_len</strong>: Maximum sequence length (default: 4096)</li>
+    </ul>
+    <h3>Key Insight</h3>
+    <p>RoPE naturally encodes relative position information in the attention dot product, enabling better length generalization than absolute positional encodings.</p>
+  `,
+
+  ADGQA: `
+    <h2>Grouped Query Attention (GQA)</h2>
+    <p>A memory-efficient attention variant where multiple query heads share fewer key-value heads. This reduces KV cache size during inference while maintaining most of the quality of full multi-head attention.</p>
+    <h3>Architecture</h3>
+    <ol>
+      <li>Q has <code>num_heads</code> heads (full count)</li>
+      <li>K and V have <code>num_kv_heads</code> heads (reduced count)</li>
+      <li>Each KV head is shared by <code>num_heads / num_kv_heads</code> query heads</li>
+      <li>When <code>num_kv_heads = 1</code>, this becomes Multi-Query Attention (MQA)</li>
+      <li>When <code>num_kv_heads = num_heads</code>, this is standard MHA</li>
+    </ol>
+    <h3>Parameters</h3>
+    <ul>
+      <li><strong>embed_dim</strong>: Total embedding dimension</li>
+      <li><strong>num_heads</strong>: Number of query heads</li>
+      <li><strong>num_kv_heads</strong>: Number of key-value heads (must divide num_heads)</li>
+    </ul>
+    <h3>Key Insight</h3>
+    <p>GQA was introduced by Google and adopted by LLaMA 2, Mistral, and DeepSeek. It reduces KV cache memory by <code>num_heads / num_kv_heads</code> with minimal quality loss.</p>
+  `,
+
+  ADLoRA: `
+    <h2>LoRA (Low-Rank Adaptation)</h2>
+    <p>A parameter-efficient fine-tuning technique that freezes the base model weights and adds small trainable low-rank matrices. This dramatically reduces the number of trainable parameters.</p>
+    <h3>Architecture</h3>
+    <p><code>output = (W + alpha/rank * B @ A) * x + bias</code></p>
+    <ol>
+      <li><strong>W</strong>: Frozen base weight matrix [output_dim x input_dim]</li>
+      <li><strong>A</strong>: Trainable down-projection [rank x input_dim]</li>
+      <li><strong>B</strong>: Trainable up-projection [output_dim x rank], initialized to zero</li>
+      <li>At initialization, B=0 so the output equals the original W*x</li>
+    </ol>
+    <h3>Parameters</h3>
+    <ul>
+      <li><strong>input_dim</strong>: Input feature dimension</li>
+      <li><strong>output_dim</strong>: Output feature dimension</li>
+      <li><strong>rank</strong>: Rank of the low-rank matrices (typically 4-64)</li>
+      <li><strong>alpha</strong>: Scaling factor (typically equal to rank)</li>
+    </ul>
+    <h3>Key Insight</h3>
+    <p>LoRA reduces trainable parameters by 100-1000x compared to full fine-tuning. Multiple LoRA adapters can be swapped without reloading the base model.</p>
+  `,
+
+  ADFlashAttention: `
+    <h2>Flash Attention</h2>
+    <p>A memory-efficient attention implementation that computes exact attention in tiles, reducing peak memory usage from O(n^2) to O(n). Based on the FlashAttention algorithm.</p>
+    <h3>How it works</h3>
+    <ol>
+      <li>Divides Q, K, V into tiles of size <code>tile_size</code></li>
+      <li>Processes each Q tile against all K tiles using online softmax</li>
+      <li>Maintains running statistics (max, sum) for numerical stability</li>
+      <li>Produces identical output to standard attention</li>
+    </ol>
+    <h3>Parameters</h3>
+    <ul>
+      <li><strong>embed_dim</strong>: Total embedding dimension</li>
+      <li><strong>num_heads</strong>: Number of attention heads</li>
+      <li><strong>tile_size</strong>: Size of each processing tile (default: 32)</li>
+    </ul>
+    <h3>Key Insight</h3>
+    <p>Flash Attention reduces memory usage by never materializing the full attention matrix, making it possible to process much longer sequences.</p>
+  `,
+
+  ADWeightTying: `
+    <h2>Weight Tying</h2>
+    <p>Shares the embedding weight matrix with the output projection layer, reducing the total parameter count and often improving generalization.</p>
+    <h3>How it works</h3>
+    <ol>
+      <li>Uses the embedding matrix W [vocab_size x embed_dim] as the output projection</li>
+      <li>Output logits = W * hidden_states (matrix multiply with shared weights)</li>
+      <li>Gradients flow to the shared weight matrix from both the embedding and output sides</li>
+    </ol>
+    <h3>Inputs</h3>
+    <ul>
+      <li><strong>input</strong>: Hidden states [embed_dim x seq_len]</li>
+      <li><strong>weights</strong>: Embedding weight matrix [vocab_size x embed_dim]</li>
+    </ul>
+    <h3>Key Insight</h3>
+    <p>Weight tying was shown to improve language model perplexity while reducing parameters. It enforces consistency between the input and output representations.</p>
+  `,
+
+  ADRepetitionPenalty: `
+    <h2>Repetition Penalty</h2>
+    <p>Reduces the probability of generating previously seen tokens by modifying the logits before sampling. Prevents degenerate repetitive outputs.</p>
+    <h3>How it works</h3>
+    <ul>
+      <li>For positive logits of repeated tokens: divide by the penalty factor</li>
+      <li>For negative logits of repeated tokens: multiply by the penalty factor</li>
+      <li>Non-repeated tokens are unaffected</li>
+    </ul>
+    <h3>Parameters</h3>
+    <ul>
+      <li><strong>penalty</strong>: Penalty factor (1.0 = no penalty, 1.2 = moderate, 2.0 = strong)</li>
+    </ul>
+    <h3>Inputs</h3>
+    <ul>
+      <li><strong>logits</strong>: Model output logits [vocab_size x seq_len]</li>
+      <li><strong>generated_ids</strong>: List of previously generated token IDs</li>
+    </ul>
+  `,
 };

@@ -164,6 +164,15 @@ if(APPLE)
 endif()
 add_test(NAME new_modules_test COMMAND new_modules_test)
 
+# Advanced modules test (GQA, LoRA, KV Cache, Rep Penalty, Flash Attention, Weight Tying)
+add_executable(advanced_modules_test test/advanced_modules_test.cpp ${LIB_SOURCES})
+target_include_directories(advanced_modules_test PRIVATE include)
+if(APPLE)
+  target_compile_definitions(advanced_modules_test PRIVATE USE_ACCELERATE)
+  target_link_libraries(advanced_modules_test PRIVATE "-framework Accelerate")
+endif()
+add_test(NAME advanced_modules_test COMMAND advanced_modules_test)
+
 # BPE training tool
 add_executable(train_bpe src/train_bpe.cpp)
 target_include_directories(train_bpe PRIVATE include)

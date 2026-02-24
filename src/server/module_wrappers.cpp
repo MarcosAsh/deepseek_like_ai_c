@@ -5,11 +5,20 @@
 #include "layers/ad_embedding.hpp"
 #include "layers/ad_positional_encoding.hpp"
 #include "layers/ad_layer_norm.hpp"
+#include "layers/ad_rmsnorm.hpp"
 #include "layers/ad_multi_head_attention.hpp"
 #include "layers/ad_feed_forward.hpp"
+#include "layers/ad_swiglu.hpp"
 #include "layers/ad_moe.hpp"
 #include "layers/ad_linear.hpp"
 #include "layers/ad_transformer.hpp"
+#include "layers/ad_gqa.hpp"
+#include "layers/ad_lora.hpp"
+#include "layers/ad_kv_cache.hpp"
+#include "layers/ad_repetition_penalty.hpp"
+#include "layers/ad_flash_attention.hpp"
+#include "layers/ad_weight_tying.hpp"
+#include "layers/rope.hpp"
 #include "autodiff.hpp"
 #include <stdexcept>
 #include <cmath>
@@ -626,6 +635,270 @@ public:
     }
 };
 
+class ADRMSNormWrapper : public ModuleWrapper {
+    std::unique_ptr<ADRMSNorm> rn;
+    int dim;
+    float eps;
+public:
+    ADRMSNormWrapper(const json& config)
+        : dim(config.value("dim", 64)),
+          eps(config.value("eps", 1e-6f)) {}
+
+    std::string type_name() const override { return "ADRMSNorm"; }
+    std::string category() const override { return "normalization"; }
+    std::string description() const override {
+        return "RMS normalization: normalizes by root mean square, no mean centering";
+    }
+    std::vector<PortDescriptor> input_ports() const override {
+        return {{"input", PortType::AD_TENSOR}};
+    }
+    std::vector<PortDescriptor> output_ports() const override {
+        return {{"output", PortType::AD_TENSOR}};
+    }
+    json default_config() const override {
+        return {{"dim", 64}, {"eps", 1e-6}};
+    }
+
+    std::unordered_map<std::string, PortValue> execute(
+        const std::unordered_map<std::string, PortValue>& inputs) override {
+        if (!rn) rn = std::make_unique<ADRMSNorm>(dim, eps);
+        auto input = get_input<std::shared_ptr<ADTensor>>(inputs, "input");
+        auto out = rn->forward(input);
+        return {{"output", PortValue(out)}};
+    }
+};
+
+class ADSwiGLUWrapper : public ModuleWrapper {
+    std::unique_ptr<ADSwiGLU> swiglu;
+    int embed_dim, hidden_dim;
+public:
+    ADSwiGLUWrapper(const json& config)
+        : embed_dim(config.value("embed_dim", 64)),
+          hidden_dim(config.value("hidden_dim", 256)) {}
+
+    std::string type_name() const override { return "ADSwiGLU"; }
+    std::string category() const override { return "feedforward"; }
+    std::string description() const override {
+        return "SwiGLU feed-forward: gated linear unit with Swish activation";
+    }
+    std::vector<PortDescriptor> input_ports() const override {
+        return {{"input", PortType::AD_TENSOR}};
+    }
+    std::vector<PortDescriptor> output_ports() const override {
+        return {{"output", PortType::AD_TENSOR}};
+    }
+    json default_config() const override {
+        return {{"embed_dim", 64}, {"hidden_dim", 256}};
+    }
+
+    std::unordered_map<std::string, PortValue> execute(
+        const std::unordered_map<std::string, PortValue>& inputs) override {
+        if (!swiglu) swiglu = std::make_unique<ADSwiGLU>(embed_dim, hidden_dim);
+        auto input = get_input<std::shared_ptr<ADTensor>>(inputs, "input");
+        auto out = swiglu->forward(input);
+        return {{"output", PortValue(out)}};
+    }
+};
+
+class RoPEWrapper : public ModuleWrapper {
+    std::unique_ptr<RoPE> rope;
+    int head_dim, max_len;
+public:
+    RoPEWrapper(const json& config)
+        : head_dim(config.value("head_dim", 64)),
+          max_len(config.value("max_len", 4096)) {}
+
+    std::string type_name() const override { return "RoPE"; }
+    std::string category() const override { return "embedding"; }
+    std::string description() const override {
+        return "Rotary Position Embedding: applies rotation-based position encoding";
+    }
+    std::vector<PortDescriptor> input_ports() const override {
+        return {{"input", PortType::AD_TENSOR}};
+    }
+    std::vector<PortDescriptor> output_ports() const override {
+        return {{"output", PortType::AD_TENSOR}};
+    }
+    json default_config() const override {
+        return {{"head_dim", 64}, {"max_len", 4096}};
+    }
+
+    std::unordered_map<std::string, PortValue> execute(
+        const std::unordered_map<std::string, PortValue>& inputs) override {
+        if (!rope) rope = std::make_unique<RoPE>(head_dim, max_len);
+        auto input = get_input<std::shared_ptr<ADTensor>>(inputs, "input");
+        auto out = rope->apply_ad(input);
+        return {{"output", PortValue(out)}};
+    }
+};
+
+class ADGQAWrapper : public ModuleWrapper {
+    std::unique_ptr<ADGQA> gqa;
+    int embed_dim, num_heads, num_kv_heads;
+public:
+    ADGQAWrapper(const json& config)
+        : embed_dim(config.value("embed_dim", 64)),
+          num_heads(config.value("num_heads", 8)),
+          num_kv_heads(config.value("num_kv_heads", 2)) {}
+
+    std::string type_name() const override { return "ADGQA"; }
+    std::string category() const override { return "attention"; }
+    std::string description() const override {
+        return "Grouped Query Attention: fewer KV heads than Q heads for memory efficiency";
+    }
+    std::vector<PortDescriptor> input_ports() const override {
+        return {{"input", PortType::AD_TENSOR}};
+    }
+    std::vector<PortDescriptor> output_ports() const override {
+        return {{"output", PortType::AD_TENSOR}};
+    }
+    json default_config() const override {
+        return {{"embed_dim", 64}, {"num_heads", 8}, {"num_kv_heads", 2}};
+    }
+
+    std::unordered_map<std::string, PortValue> execute(
+        const std::unordered_map<std::string, PortValue>& inputs) override {
+        if (!gqa) gqa = std::make_unique<ADGQA>(embed_dim, num_heads, num_kv_heads);
+        auto input = get_input<std::shared_ptr<ADTensor>>(inputs, "input");
+        auto out = gqa->forward(input);
+        return {{"output", PortValue(out)}};
+    }
+};
+
+class ADLoRAWrapper : public ModuleWrapper {
+    std::unique_ptr<ADLoRA> lora;
+    int input_dim, output_dim, rank;
+    float alpha;
+public:
+    ADLoRAWrapper(const json& config)
+        : input_dim(config.value("input_dim", 64)),
+          output_dim(config.value("output_dim", 64)),
+          rank(config.value("rank", 8)),
+          alpha(config.value("alpha", 8.0f)) {}
+
+    std::string type_name() const override { return "ADLoRA"; }
+    std::string category() const override { return "linear"; }
+    std::string description() const override {
+        return "LoRA: Low-Rank Adaptation layer for parameter-efficient fine-tuning";
+    }
+    std::vector<PortDescriptor> input_ports() const override {
+        return {{"input", PortType::AD_TENSOR}};
+    }
+    std::vector<PortDescriptor> output_ports() const override {
+        return {{"output", PortType::AD_TENSOR}};
+    }
+    json default_config() const override {
+        return {{"input_dim", 64}, {"output_dim", 64}, {"rank", 8}, {"alpha", 8.0}};
+    }
+
+    std::unordered_map<std::string, PortValue> execute(
+        const std::unordered_map<std::string, PortValue>& inputs) override {
+        if (!lora) lora = std::make_unique<ADLoRA>(input_dim, output_dim, rank, alpha);
+        auto input = get_input<std::shared_ptr<ADTensor>>(inputs, "input");
+        auto out = lora->forward(input);
+        return {{"output", PortValue(out)}};
+    }
+};
+
+class ADFlashAttentionWrapper : public ModuleWrapper {
+    std::unique_ptr<ADFlashAttention> flash;
+    int embed_dim, num_heads, tile_size;
+public:
+    ADFlashAttentionWrapper(const json& config)
+        : embed_dim(config.value("embed_dim", 64)),
+          num_heads(config.value("num_heads", 4)),
+          tile_size(config.value("tile_size", 32)) {}
+
+    std::string type_name() const override { return "ADFlashAttention"; }
+    std::string category() const override { return "attention"; }
+    std::string description() const override {
+        return "Flash Attention: tiled attention for reduced memory usage";
+    }
+    std::vector<PortDescriptor> input_ports() const override {
+        return {{"input", PortType::AD_TENSOR}};
+    }
+    std::vector<PortDescriptor> output_ports() const override {
+        return {{"output", PortType::AD_TENSOR}};
+    }
+    json default_config() const override {
+        return {{"embed_dim", 64}, {"num_heads", 4}, {"tile_size", 32}};
+    }
+
+    std::unordered_map<std::string, PortValue> execute(
+        const std::unordered_map<std::string, PortValue>& inputs) override {
+        if (!flash) flash = std::make_unique<ADFlashAttention>(embed_dim, num_heads, tile_size);
+        auto input = get_input<std::shared_ptr<ADTensor>>(inputs, "input");
+        auto out = flash->forward(input);
+        return {{"output", PortValue(out)}};
+    }
+};
+
+class ADWeightTyingWrapper : public ModuleWrapper {
+    std::unique_ptr<ADWeightTying> wt;
+public:
+    ADWeightTyingWrapper(const json&) {}
+
+    std::string type_name() const override { return "ADWeightTying"; }
+    std::string category() const override { return "linear"; }
+    std::string description() const override {
+        return "Weight Tying: projects hidden states to logits using shared embedding weights";
+    }
+    std::vector<PortDescriptor> input_ports() const override {
+        return {
+            {"input", PortType::AD_TENSOR},
+            {"weights", PortType::AD_TENSOR}
+        };
+    }
+    std::vector<PortDescriptor> output_ports() const override {
+        return {{"output", PortType::AD_TENSOR}};
+    }
+    json default_config() const override { return json::object(); }
+
+    std::unordered_map<std::string, PortValue> execute(
+        const std::unordered_map<std::string, PortValue>& inputs) override {
+        auto weights = get_input<std::shared_ptr<ADTensor>>(inputs, "weights");
+        auto input = get_input<std::shared_ptr<ADTensor>>(inputs, "input");
+        wt = std::make_unique<ADWeightTying>(weights);
+        auto out = wt->forward(input);
+        return {{"output", PortValue(out)}};
+    }
+};
+
+class ADRepetitionPenaltyWrapper : public ModuleWrapper {
+    std::unique_ptr<ADRepetitionPenalty> rp;
+    float penalty;
+public:
+    ADRepetitionPenaltyWrapper(const json& config)
+        : penalty(config.value("penalty", 1.2f)) {}
+
+    std::string type_name() const override { return "ADRepetitionPenalty"; }
+    std::string category() const override { return "generation"; }
+    std::string description() const override {
+        return "Repetition Penalty: reduces probability of previously generated tokens";
+    }
+    std::vector<PortDescriptor> input_ports() const override {
+        return {
+            {"logits", PortType::AD_TENSOR},
+            {"generated_ids", PortType::TOKEN_IDS}
+        };
+    }
+    std::vector<PortDescriptor> output_ports() const override {
+        return {{"output", PortType::AD_TENSOR}};
+    }
+    json default_config() const override {
+        return {{"penalty", 1.2}};
+    }
+
+    std::unordered_map<std::string, PortValue> execute(
+        const std::unordered_map<std::string, PortValue>& inputs) override {
+        if (!rp) rp = std::make_unique<ADRepetitionPenalty>(penalty);
+        auto logits = get_input<std::shared_ptr<ADTensor>>(inputs, "logits");
+        auto gen_ids = get_input<std::vector<int>>(inputs, "generated_ids");
+        auto out = rp->apply(logits, gen_ids);
+        return {{"output", PortValue(out)}};
+    }
+};
+
 } // namespace server
 
 #include "server/module_registry.hpp"
@@ -669,6 +942,22 @@ void register_all_modules(ModuleRegistry& registry) {
         [](const json& c) { return std::make_unique<CrossEntropyWrapper>(c); });
     registry.register_module("Backward",
         [](const json& c) { return std::make_unique<BackwardWrapper>(c); });
+    registry.register_module("ADRMSNorm",
+        [](const json& c) { return std::make_unique<ADRMSNormWrapper>(c); });
+    registry.register_module("ADSwiGLU",
+        [](const json& c) { return std::make_unique<ADSwiGLUWrapper>(c); });
+    registry.register_module("RoPE",
+        [](const json& c) { return std::make_unique<RoPEWrapper>(c); });
+    registry.register_module("ADGQA",
+        [](const json& c) { return std::make_unique<ADGQAWrapper>(c); });
+    registry.register_module("ADLoRA",
+        [](const json& c) { return std::make_unique<ADLoRAWrapper>(c); });
+    registry.register_module("ADFlashAttention",
+        [](const json& c) { return std::make_unique<ADFlashAttentionWrapper>(c); });
+    registry.register_module("ADWeightTying",
+        [](const json& c) { return std::make_unique<ADWeightTyingWrapper>(c); });
+    registry.register_module("ADRepetitionPenalty",
+        [](const json& c) { return std::make_unique<ADRepetitionPenaltyWrapper>(c); });
 }
 
 } // namespace server
