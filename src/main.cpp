@@ -5,6 +5,7 @@
 #include "layers/ad_linear.hpp"
 #include "optimizer.hpp"
 #include "autodiff.hpp"
+#include "lr_scheduler.hpp"
 #include <iostream>
 #include <fstream>
 #include <sstream>
@@ -120,7 +121,87 @@ struct GenerateConfig {
     float top_p;
     float temperature;
     int eos_id;
+    int beam_width;
 };
+
+// Beam search: explore multiple hypotheses in parallel
+static std::vector<int> beam_search_cached(
+    const std::vector<int>& prompt_tokens,
+    Embedding& embed_layer,
+    PositionalEncoding& posenc,
+    Transformer& transformer,
+    const Tensor& out_W,
+    const Tensor& out_b,
+    int vocab_size,
+    const GenerateConfig& cfg) {
+
+    struct Beam {
+        std::vector<int> tokens;
+        float score;
+    };
+
+    int beam_width = cfg.beam_width;
+    std::vector<Beam> beams = {{prompt_tokens, 0.0f}};
+
+    for (int step = 0; step < cfg.max_new_tokens; ++step) {
+        std::vector<Beam> candidates;
+        for (auto& beam : beams) {
+            if (cfg.eos_id >= 0 && !beam.tokens.empty() && beam.tokens.back() == cfg.eos_id) {
+                candidates.push_back(beam);
+                continue;
+            }
+            // Run inference for this beam's full sequence (non-cached for simplicity)
+            int context_len = std::min((int)beam.tokens.size(), cfg.seq_len);
+            std::vector<int> input_ids(beam.tokens.end() - context_len, beam.tokens.end());
+            Tensor x = embed_layer.forward(input_ids);
+            Tensor pos = posenc.forward(context_len);
+            for (size_t i = 0; i < x.data.size(); ++i) x.data[i] += pos.data[i];
+            Tensor h = transformer.forward(x, false, false);
+            int last_idx = context_len - 1;
+            Tensor h_last(h.rows, 1);
+            for (int r = 0; r < h.rows; ++r) h_last.data[r] = h(r, last_idx);
+            Tensor logits = out_W.matmul(h_last);
+            for (int i = 0; i < vocab_size; ++i) logits.data[i] += out_b.data[i];
+
+            // Log-softmax
+            float max_l = *std::max_element(logits.data.begin(), logits.data.begin() + vocab_size);
+            float sum_exp = 0.0f;
+            for (int i = 0; i < vocab_size; ++i) sum_exp += std::exp(logits.data[i] - max_l);
+            float log_sum = max_l + std::log(sum_exp);
+
+            // Expand top beam_width tokens
+            std::vector<int> idxs(vocab_size);
+            std::iota(idxs.begin(), idxs.end(), 0);
+            std::partial_sort(idxs.begin(), idxs.begin() + beam_width, idxs.end(),
+                              [&](int a, int b) { return logits.data[a] > logits.data[b]; });
+            for (int k = 0; k < beam_width; ++k) {
+                int tok = idxs[k];
+                float log_prob = logits.data[tok] - log_sum;
+                Beam new_beam;
+                new_beam.tokens = beam.tokens;
+                new_beam.tokens.push_back(tok);
+                new_beam.score = beam.score + log_prob;
+                candidates.push_back(std::move(new_beam));
+            }
+        }
+        // Keep top beam_width candidates
+        std::partial_sort(candidates.begin(),
+                          candidates.begin() + std::min(beam_width, (int)candidates.size()),
+                          candidates.end(),
+                          [](const Beam& a, const Beam& b) { return a.score > b.score; });
+        if ((int)candidates.size() > beam_width) candidates.resize(beam_width);
+        beams = std::move(candidates);
+
+        // Check if all beams ended
+        bool all_done = true;
+        for (auto& b : beams) {
+            if (cfg.eos_id < 0 || b.tokens.back() != cfg.eos_id) { all_done = false; break; }
+        }
+        if (all_done) break;
+    }
+    return beams[0].tokens;
+}
+
 static std::vector<int> generate_tokens(
     const std::vector<int>& prompt_tokens,
     ADEmbedding& ad_embed,
@@ -291,6 +372,14 @@ int main(int argc, char** argv) {
     int moe_num_experts = 4;
     int moe_top_k_experts = 2;
     float moe_aux_weight = 0.01f;
+    // New feature flags
+    bool use_rmsnorm = false;
+    bool use_swiglu = false;
+    bool use_rope = false;
+    int warmup_steps = 0;
+    std::string lr_schedule = "constant";
+    int grad_accum_steps = 1;
+    int beam_width = 0;
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -358,39 +447,67 @@ int main(int argc, char** argv) {
             moe_top_k_experts = std::stoi(argv[++i]);
         } else if (arg == "--moe_aux_weight" && i + 1 < argc) {
             moe_aux_weight = std::stof(argv[++i]);
+        } else if (arg == "--rmsnorm") {
+            use_rmsnorm = true;
+        } else if (arg == "--swiglu") {
+            use_swiglu = true;
+        } else if (arg == "--rope") {
+            use_rope = true;
+        } else if (arg == "--warmup_steps" && i + 1 < argc) {
+            warmup_steps = std::stoi(argv[++i]);
+        } else if (arg == "--lr_schedule" && i + 1 < argc) {
+            lr_schedule = argv[++i];
+        } else if (arg == "--grad_accum" && i + 1 < argc) {
+            grad_accum_steps = std::stoi(argv[++i]);
+        } else if (arg == "--beam_width" && i + 1 < argc) {
+            beam_width = std::stoi(argv[++i]);
         } else if (arg == "--help") {
             std::cout << "Usage: deepseek_ai [--train data.txt] [--generate prompt.txt] [options]\n"
                       << "Modes:\n"
                       << "  --train PATH         train model on text data\n"
                       << "  --generate PATH      generate from prompt file (one-shot)\n"
-                      << "Options:\n"
-                      << "  --vocab PATH         vocabulary file (default: input_files/vocab.txt)\n"
+                      << "  --cli                interactive generation mode\n"
+                      << "\nModel architecture:\n"
                       << "  --embed_dim N        embedding dimension (default: 64)\n"
                       << "  --hidden_dim N       hidden dimension (default: 64)\n"
                       << "  --n_heads N          number of attention heads (default: 4)\n"
                       << "  --num_layers N       number of transformer layers (default: 3)\n"
                       << "  --max_len N          maximum sequence length (default: 128)\n"
+                      << "  --rmsnorm            use RMSNorm instead of LayerNorm (LLaMA-style)\n"
+                      << "  --swiglu             use SwiGLU activation instead of GELU (LLaMA-style)\n"
+                      << "  --rope               use Rotary Position Embeddings (LLaMA-style)\n"
+                      << "\nTraining:\n"
+                      << "  --vocab PATH         vocabulary file (default: input_files/vocab.txt)\n"
+                      << "  --bpe-codes PATH     BPE merges file for true BPE (optional)\n"
                       << "  --seq_len N          training sequence length (default: 32)\n"
                       << "  --batch_size N       mini-batch size (default: 16)\n"
                       << "  --epochs N           number of training epochs (default: 5)\n"
                       << "  --lr FLOAT           learning rate (default: 1e-3)\n"
+                      << "  --lr_schedule TYPE   LR schedule: constant|cosine (default: constant)\n"
+                      << "  --warmup_steps N     linear warmup steps (default: 0)\n"
+                      << "  --grad_accum N       gradient accumulation steps (default: 1)\n"
                       << "  --resume PATH        checkpoint file to load (default: none)\n"
                       << "  --save PATH          checkpoint file to save (default: checkpoint.bin)\n"
                       << "  --valid PATH         validation data file (default: none)\n"
                       << "  --patience N         early stopping patience (default: 2 epochs)\n"
-                      << "  --bpe-codes PATH     BPE merges file for true BPE (optional)\n"
+                      << "\nGeneration:\n"
                       << "  --max_new_tokens N   maximum tokens to generate (default: 32)\n"
                       << "  --top_k N            top-k sampling (0=greedy)\n"
                       << "  --top_p FLOAT        top-p (nucleus) sampling (0=greedy)\n"
                       << "  --temperature FLOAT  sampling temperature (default: 1.0)\n"
+                      << "  --beam_width N       beam search width (0=disabled, default: 0)\n"
+                      << "\nQuantization:\n"
                       << "  --qat                enable quantization-aware training (fake quant)\n"
                       << "  --qat-bits N         bits for quantization (default: 8)\n"
                       << "  --ptq-out PATH       output path for post-training quantized model\n"
-                      << "  --timer              enable performance timers\n"
+                      << "\nMixture of Experts:\n"
                       << "  --moe                enable Mixture of Experts\n"
                       << "  --num_experts N      number of MoE experts (default: 4)\n"
                       << "  --moe_top_k N        experts per token (default: 2)\n"
-                      << "  --moe_aux_weight F   aux loss weight (default: 0.01)\n";
+                      << "  --moe_aux_weight F   aux loss weight (default: 0.01)\n"
+                      << "\nMisc:\n"
+                      << "  --pool_size_mb N     memory pool size in MB (default: 0=disabled)\n"
+                      << "  --timer              enable performance timers\n";
             return 0;
         } else {
             std::cerr << "Unknown option or missing argument: " << arg << "\n";
@@ -398,13 +515,30 @@ int main(int argc, char** argv) {
         }
     }
 
+    // Build transformer config
+    TransformerConfig tcfg;
+    tcfg.embed_dim = embed_dim;
+    tcfg.hidden_dim = hidden_dim;
+    tcfg.n_heads = n_heads;
+    tcfg.num_layers = num_layers;
+    tcfg.use_moe = use_moe;
+    tcfg.num_experts = moe_num_experts;
+    tcfg.moe_top_k = moe_top_k_experts;
+    tcfg.use_rmsnorm = use_rmsnorm;
+    tcfg.use_swiglu = use_swiglu;
+    tcfg.use_rope = use_rope;
+
     quant::g_qat_enabled = qat_enabled;
     quant::g_qat_bits = qat_bits;
     if (quant::g_qat_enabled) {
         std::cout << "Quantization-aware training enabled (" << qat_bits << " bits)\n";
     }
     if (pool_size_mb > 0) {
-        UnifiedMemoryManager::instance().init(pool_size_mb * 1024 * 1024);
+        if (pool_size_mb > 16384) {
+            std::cerr << "Error: pool_size_mb too large (max 16384 MB)\n";
+            return 1;
+        }
+        UnifiedMemoryManager::instance().init(static_cast<size_t>(pool_size_mb) * 1024 * 1024);
         std::cout << "Initialized on-chip memory pool of size " << pool_size_mb << " MB\n";
     }
     if (mode == "cli") {
@@ -412,7 +546,7 @@ int main(int argc, char** argv) {
         int V = (int)tokenizer.vocab_size();
         ADEmbedding ad_embed(V, embed_dim);
         ADPositionalEncoding ad_posenc(embed_dim, max_len);
-        ADTransformer ad_transformer(num_layers, embed_dim, hidden_dim, n_heads, use_moe, moe_num_experts, moe_top_k_experts);
+        ADTransformer ad_transformer(tcfg);
         auto W_embed = ad_embed.get_weights();
         Tensor tb_lm(V, 1); tb_lm.data.assign(V, 0.0f);
         auto b_lm = make_ad(tb_lm); register_parameter(b_lm);
@@ -433,15 +567,21 @@ int main(int argc, char** argv) {
                              inf_embed, inf_transformer, out_W, out_b);
         std::mt19937 gen(std::random_device{}());
         GenerateConfig cfg{max_new_tokens, seq_len, top_k, top_p, temperature,
-                           tokenizer.to_id("</s>")};
+                           tokenizer.to_id("</s>"), beam_width};
         std::string line;
         while (true) {
             std::cout << ">> " << std::flush;
             if (!std::getline(std::cin, line)) break;
             if (line.empty() || line == "exit") break;
             auto tokens = tokenizer.encode(line);
-            auto output_tokens = generate_tokens_cached(tokens, inf_embed, inf_posenc,
-                inf_transformer, out_W, out_b, V, cfg, gen);
+            std::vector<int> output_tokens;
+            if (beam_width > 0) {
+                output_tokens = beam_search_cached(tokens, inf_embed, inf_posenc,
+                    inf_transformer, out_W, out_b, V, cfg);
+            } else {
+                output_tokens = generate_tokens_cached(tokens, inf_embed, inf_posenc,
+                    inf_transformer, out_W, out_b, V, cfg, gen);
+            }
             std::cout << tokenizer.decode(output_tokens) << std::endl;
         }
         return 0;
@@ -460,7 +600,7 @@ int main(int argc, char** argv) {
         auto tokens = tokenizer.encode(prompt);
         ADEmbedding ad_embed(V, embed_dim);
         ADPositionalEncoding ad_posenc(embed_dim, max_len);
-        ADTransformer ad_transformer(num_layers, embed_dim, hidden_dim, n_heads, use_moe, moe_num_experts, moe_top_k_experts);
+        ADTransformer ad_transformer(tcfg);
         auto W_embed = ad_embed.get_weights();
         Tensor tb_lm(V, 1); tb_lm.data.assign(V, 0.0f);
         auto b_lm = make_ad(tb_lm); register_parameter(b_lm);
@@ -480,9 +620,15 @@ int main(int argc, char** argv) {
                              inf_embed, inf_transformer, out_W, out_b);
         std::mt19937 gen(std::random_device{}());
         GenerateConfig cfg{max_new_tokens, seq_len, top_k, top_p, temperature,
-                           tokenizer.to_id("</s>")};
-        auto output_tokens = generate_tokens_cached(tokens, inf_embed, inf_posenc,
-            inf_transformer, out_W, out_b, V, cfg, gen);
+                           tokenizer.to_id("</s>"), beam_width};
+        std::vector<int> output_tokens;
+        if (beam_width > 0) {
+            output_tokens = beam_search_cached(tokens, inf_embed, inf_posenc,
+                inf_transformer, out_W, out_b, V, cfg);
+        } else {
+            output_tokens = generate_tokens_cached(tokens, inf_embed, inf_posenc,
+                inf_transformer, out_W, out_b, V, cfg, gen);
+        }
         std::cout << tokenizer.decode(output_tokens) << std::endl;
         return 0;
     }
@@ -503,16 +649,36 @@ int main(int argc, char** argv) {
         std::cout << "MoE enabled: " << moe_num_experts << " experts, top-"
                   << moe_top_k_experts << ", aux_weight=" << moe_aux_weight << "\n";
     }
+    if (use_rmsnorm) std::cout << "Using RMSNorm (LLaMA-style)\n";
+    if (use_swiglu) std::cout << "Using SwiGLU activation (LLaMA-style)\n";
+    if (use_rope) std::cout << "Using RoPE (Rotary Position Embeddings)\n";
+    if (lr_schedule == "cosine") {
+        std::cout << "LR schedule: cosine annealing, warmup=" << warmup_steps << " steps\n";
+    }
+    if (grad_accum_steps > 1) {
+        std::cout << "Gradient accumulation: " << grad_accum_steps << " steps"
+                  << " (effective batch size=" << batch_size * grad_accum_steps << ")\n";
+    }
 
     Tokenizer tokenizer(vocab_file, bpe_codes_file);
-    std::ifstream in(data_file);
-    if (!in) {
-        std::cerr << "Cannot open data file: " << data_file << "\n";
+    std::string text;
+    try {
+        std::ifstream in(data_file);
+        if (!in) {
+            std::cerr << "Cannot open data file: " << data_file << "\n";
+            return 1;
+        }
+        std::ostringstream ss;
+        ss << in.rdbuf();
+        if (in.bad()) {
+            std::cerr << "I/O error reading data file: " << data_file << "\n";
+            return 1;
+        }
+        text = ss.str();
+    } catch (const std::exception& e) {
+        std::cerr << "Error reading data file: " << e.what() << "\n";
         return 1;
     }
-    std::ostringstream ss;
-    ss << in.rdbuf();
-    std::string text = ss.str();
     auto data_tokens = tokenizer.encode(text);
     int N = data_tokens.size();
     if (N < seq_len + 1) {
@@ -543,7 +709,7 @@ int main(int argc, char** argv) {
 
     ADEmbedding ad_embed(tokenizer.vocab_size(), embed_dim);
     ADPositionalEncoding ad_posenc(embed_dim, max_len);
-    ADTransformer ad_transformer(num_layers, embed_dim, hidden_dim, n_heads, use_moe, moe_num_experts, moe_top_k_experts);
+    ADTransformer ad_transformer(tcfg);
     auto W_embed = ad_embed.get_weights();
     int Vocab = (int)tokenizer.vocab_size();
     Tensor tb_lm(Vocab, 1);
@@ -560,19 +726,32 @@ int main(int argc, char** argv) {
     for (int s = 0; s + seq_len < N; s += seq_len) {
         starts.push_back(s);
     }
+
+    // Compute total training steps for LR scheduler
+    int batches_per_epoch = ((int)starts.size() + batch_size - 1) / batch_size;
+    int total_optimizer_steps = batches_per_epoch * epochs;
+    if (grad_accum_steps > 1) {
+        total_optimizer_steps = (batches_per_epoch / grad_accum_steps) * epochs;
+    }
+    LRScheduler lr_sched(lr, warmup_steps, total_optimizer_steps, lr * 0.1f);
+
     std::vector<float> loss_history;
     std::vector<float> val_history;
-    std::vector<float> grad_z;
-    grad_z.reserve(tokenizer.vocab_size());
     std::mt19937 rng(1234);
     int no_improve = 0;
     float best_val_loss = std::numeric_limits<float>::infinity();
+    int global_step = 0;
+
     for (int epoch = 1; epoch <= epochs; ++epoch) {
         std::shuffle(starts.begin(), starts.end(), rng);
         float total_loss = 0.0f;
         int count = 0;
+        int accum_count = 0;
+
         for (size_t batch_start = 0; batch_start < starts.size(); batch_start += batch_size) {
-            optimizer.zero_grad();
+            if (accum_count == 0) {
+                optimizer.zero_grad();
+            }
             size_t batch_end = std::min(batch_start + batch_size, starts.size());
             for (size_t idx = batch_start; idx < batch_end; ++idx) {
                 int start = starts[idx];
@@ -638,13 +817,49 @@ int main(int argc, char** argv) {
                 }
                 loss_ad->backward();
                 float loss = loss_ad->val.data[0];
+                if (std::isnan(loss) || std::isinf(loss)) {
+                    std::cerr << "Error: NaN/Inf detected in loss at batch " << batch_start
+                              << ", halting training\n";
+                    if (!save_file.empty()) save_checkpoint(save_file);
+                    return 1;
+                }
                 total_loss += loss;
                 ++count;
             }
-            optimizer.step();
+            ++accum_count;
+
+            // Step optimizer after accumulating enough gradients
+            if (accum_count >= grad_accum_steps) {
+                // Update LR if using schedule
+                if (lr_schedule == "cosine") {
+                    float current_lr = lr_sched.get_lr();
+                    optimizer.lr = current_lr;
+                    lr_sched.step();
+                }
+                optimizer.step();
+                ++global_step;
+                accum_count = 0;
+            }
         }
+        // Handle leftover accumulated gradients at epoch end
+        if (accum_count > 0) {
+            if (lr_schedule == "cosine") {
+                float current_lr = lr_sched.get_lr();
+                optimizer.lr = current_lr;
+                lr_sched.step();
+            }
+            optimizer.step();
+            ++global_step;
+            accum_count = 0;
+        }
+
         float avg_loss = total_loss / count;
-        std::cout << "Epoch " << epoch << ": Avg XEnt loss = " << avg_loss << "\n";
+        if (lr_schedule == "cosine") {
+            std::cout << "Epoch " << epoch << ": Avg XEnt loss = " << avg_loss
+                      << " (lr=" << optimizer.lr << ")\n";
+        } else {
+            std::cout << "Epoch " << epoch << ": Avg XEnt loss = " << avg_loss << "\n";
+        }
         loss_history.push_back(avg_loss);
         if (!save_file.empty()) {
             if (!save_checkpoint(save_file))

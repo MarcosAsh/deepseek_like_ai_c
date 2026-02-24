@@ -48,6 +48,7 @@ Tensor MoE::forward(const Tensor& input, float& aux_loss) {
         // Normalize top-k weights
         float topk_sum = 0.0f;
         for (int k = 0; k < top_k; ++k) topk_sum += probs[idxs[k]];
+        if (topk_sum < 1e-9f) topk_sum = 1e-9f;
 
         // Weighted sum of expert outputs
         for (int k = 0; k < top_k; ++k) {

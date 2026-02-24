@@ -2,6 +2,10 @@
 #include <cmath>
 #include <random>
 
+// GELU approximation constants (Hendrycks & Gimpel, 2016)
+static constexpr float GELU_SQRT_2_OVER_PI = 0.79788456f;  // sqrt(2/pi)
+static constexpr float GELU_COEFF = 0.044715f;
+
 FeedForward::FeedForward(int embed_dim, int hidden_dim, float dropout_prob_)
     : fc1(embed_dim, hidden_dim),
       fc2(hidden_dim, embed_dim),
@@ -14,7 +18,7 @@ Tensor FeedForward::forward(const Tensor& input, bool training) const {
     // GELU activation (applied elementwise)
     for (auto& v : h.data) {
         double x_val = v;
-        v = 0.5f * x_val * (1.0f + std::tanh(0.79788456f * (x_val + 0.044715f * x_val * x_val * x_val)));
+        v = 0.5f * x_val * (1.0f + std::tanh(GELU_SQRT_2_OVER_PI * (x_val + GELU_COEFF * x_val * x_val * x_val)));
     }
 
     // Apply dropout after activation only during training

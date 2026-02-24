@@ -7,6 +7,10 @@ float softmax_cross_entropy(const std::vector<float>& logits,
                             int target,
                             std::vector<float>& grad) {
     int V = (int)logits.size();
+    if (target < 0 || target >= V) {
+        grad.assign(V, 0.0f);
+        return 0.0f;
+    }
     grad.resize(V);
     float max_logit = *std::max_element(logits.begin(), logits.end());
     std::vector<float> exps(V);

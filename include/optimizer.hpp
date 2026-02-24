@@ -17,8 +17,8 @@ public:
           float weight_decay=0.01f, float clip_norm=1.0f);
     void step();
     void zero_grad();
-private:
     float lr;
+private:
     float beta1;
     float beta2;
     float eps;

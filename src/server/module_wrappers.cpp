@@ -335,8 +335,16 @@ public:
 
     std::unordered_map<std::string, PortValue> execute(
         const std::unordered_map<std::string, PortValue>& inputs) override {
-        if (!block) block = std::make_unique<ADTransformerBlock>(
-            embed_dim, hidden_dim, n_heads, use_moe, num_experts, moe_top_k);
+        if (!block) {
+            TransformerConfig cfg;
+            cfg.embed_dim = embed_dim;
+            cfg.hidden_dim = hidden_dim;
+            cfg.n_heads = n_heads;
+            cfg.use_moe = use_moe;
+            cfg.num_experts = num_experts;
+            cfg.moe_top_k = moe_top_k;
+            block = std::make_unique<ADTransformerBlock>(cfg);
+        }
         auto input = get_input<std::shared_ptr<ADTensor>>(inputs, "input");
         auto out = block->forward(input);
         return {{"output", PortValue(out)}};

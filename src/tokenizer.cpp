@@ -34,6 +34,12 @@ void Tokenizer::load_vocab(const std::string& vocab_file) {
             id = static_cast<int>(vocab.size());
         }
         // Ensure vocab vector can hold at index id
+        static constexpr int MAX_VOCAB_SIZE = 1000000;
+        if (id >= MAX_VOCAB_SIZE) {
+            throw std::runtime_error("Vocabulary ID " + std::to_string(id) +
+                                     " exceeds maximum allowed size (" +
+                                     std::to_string(MAX_VOCAB_SIZE) + ")");
+        }
         if (id >= static_cast<int>(vocab.size())) {
             vocab.resize(id + 1);
         }

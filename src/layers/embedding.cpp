@@ -1,13 +1,14 @@
 #include "layers/embedding.hpp"
 #include <random>
 #include <stdexcept>
+#include <cmath>
 
 Embedding::Embedding(int vocab_size, int embed_dim)
     : weights(embed_dim, vocab_size)
 {
     std::random_device rd;
     std::mt19937 gen(rd());
-    float range = 0.1f;
+    float range = std::sqrt(6.0f / (vocab_size + embed_dim));
     std::uniform_real_distribution<float> dist(-range, range);
     for (auto &w : weights.data) {
         w = dist(gen);

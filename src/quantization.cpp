@@ -17,7 +17,9 @@ void fake_quantize_inplace(Tensor& t) {
         mx = std::max(mx, v);
     }
     int levels = (1 << g_qat_bits) - 1;
-    float scale = (mx > mn) ? (levels / (mx - mn)) : 1.0f;
+    float range = mx - mn;
+    if (range < 1e-8f) return;  // uniform tensor, nothing to quantize
+    float scale = levels / range;
     // quantize and dequantize
     for (auto& v : t.data) {
         float q = std::round((v - mn) * scale);
@@ -37,7 +39,9 @@ void post_training_quantize(const Tensor& t,
         mx = std::max(mx, v);
     }
     int levels = (1 << g_qat_bits) - 1;
-    scale_out = (mx > mn) ? (levels / (mx - mn)) : 1.0f;
+    float range = mx - mn;
+    if (range < 1e-8f) range = 1e-8f;
+    scale_out = levels / range;
     size_t N = t.data.size();
     out_data.resize(N);
     for (size_t i = 0; i < N; ++i) {

@@ -155,14 +155,14 @@ if(APPLE)
 endif()
 add_test(NAME optimizer_test COMMAND optimizer_test)
 
-# MLA test
-add_executable(mla_test test/mla_test.cpp ${LIB_SOURCES})
-target_include_directories(mla_test PRIVATE include)
+# New modules test (RoPE, SwiGLU, RMSNorm, LR scheduler)
+add_executable(new_modules_test test/new_modules_test.cpp ${LIB_SOURCES})
+target_include_directories(new_modules_test PRIVATE include)
 if(APPLE)
-  target_compile_definitions(mla_test PRIVATE USE_ACCELERATE)
-  target_link_libraries(mla_test PRIVATE "-framework Accelerate")
+  target_compile_definitions(new_modules_test PRIVATE USE_ACCELERATE)
+  target_link_libraries(new_modules_test PRIVATE "-framework Accelerate")
 endif()
-add_test(NAME mla_test COMMAND mla_test)
+add_test(NAME new_modules_test COMMAND new_modules_test)
 
 # BPE training tool
 add_executable(train_bpe src/train_bpe.cpp)
