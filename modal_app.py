@@ -20,8 +20,10 @@ image = (
     cpu=2,
     memory=512,
 )
-@modal.concurrent(max_inputs=100)
-@modal.web_server(port=8080)
+@modal.web_server(port=8080, startup_timeout=120)
 def server():
     import subprocess
-    subprocess.Popen(["/app/build/node_server", "--port", "8080"], cwd="/app")
+    subprocess.Popen(
+        ["/app/build/node_server", "--host", "0.0.0.0", "--port", "8080"],
+        cwd="/app",
+    )
