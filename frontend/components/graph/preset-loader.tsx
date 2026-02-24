@@ -47,11 +47,11 @@ export function PresetLoader({ open, onOpenChange }: PresetLoaderProps) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col">
         <DialogHeader>
           <DialogTitle>Load Preset Graph</DialogTitle>
         </DialogHeader>
-        <div className="space-y-3 mt-2">
+        <div className="space-y-3 mt-2 overflow-y-auto pr-2 flex-1 min-h-0">
           {presetsLoading ? (
             Array.from({ length: 3 }).map((_, i) => (
               <Skeleton key={i} className="h-20 w-full" />
@@ -61,7 +61,7 @@ export function PresetLoader({ open, onOpenChange }: PresetLoaderProps) {
               <Button
                 key={i}
                 variant="outline"
-                className="w-full h-auto py-4 px-5 flex flex-col items-start text-left gap-1.5"
+                className="w-full h-auto py-4 px-5 flex flex-col items-start text-left gap-1.5 shrink-0"
                 onClick={() => handleSelect(i)}
               >
                 <div className="flex items-center gap-2">
