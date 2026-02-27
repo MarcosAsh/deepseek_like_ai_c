@@ -94,8 +94,11 @@ export function TensorHeatmap({
     if (row >= 0 && row < rows && col >= 0 && col < cols) {
       const val = data[row * cols + col];
       tooltip.style.display = "block";
-      tooltip.style.left = `${x + 10}px`;
-      tooltip.style.top = `${y - 25}px`;
+      // Keep tooltip within canvas bounds
+      const tooltipLeft = Math.min(x + 10, width - 120);
+      const tooltipTop = Math.max(y - 25, 0);
+      tooltip.style.left = `${tooltipLeft}px`;
+      tooltip.style.top = `${tooltipTop}px`;
       tooltip.textContent = `[${row},${col}] = ${val?.toFixed(6) ?? "N/A"}`;
     } else {
       tooltip.style.display = "none";

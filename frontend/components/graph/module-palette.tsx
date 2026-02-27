@@ -14,7 +14,7 @@ interface ModulePaletteProps {
 }
 
 export function ModulePalette({ onAddModule }: ModulePaletteProps) {
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, error } = useQuery({
     queryKey: ["modules"],
     queryFn: fetchModules,
   });
@@ -42,7 +42,7 @@ export function ModulePalette({ onAddModule }: ModulePaletteProps) {
   }
 
   return (
-    <div className="w-56 shrink-0 border-r bg-muted/30 flex flex-col h-full overflow-hidden">
+    <div className="hidden sm:flex w-56 shrink-0 border-r bg-muted/30 flex-col h-full overflow-hidden">
       <div className="px-3 py-2 border-b shrink-0">
         <h3 className="text-sm font-semibold">Modules</h3>
         <p className="text-[10px] text-muted-foreground">
@@ -55,6 +55,10 @@ export function ModulePalette({ onAddModule }: ModulePaletteProps) {
             Array.from({ length: 5 }).map((_, i) => (
               <Skeleton key={i} className="h-8 w-full" />
             ))
+          ) : error ? (
+            <p className="text-xs text-destructive px-2 py-4 text-center">
+              Failed to load modules. Is the backend running?
+            </p>
           ) : (
             Object.entries(grouped).map(([category, mods]) => (
               <div key={category}>

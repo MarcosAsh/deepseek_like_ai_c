@@ -32,9 +32,31 @@ export function NodeContextMenu({
         onClose();
       }
     }
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        onClose();
+      }
+    }
     document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
   }, [onClose]);
+
+  // Adjust position to stay within viewport
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    if (rect.right > window.innerWidth) {
+      el.style.left = `${Math.max(0, x - rect.width)}px`;
+    }
+    if (rect.bottom > window.innerHeight) {
+      el.style.top = `${Math.max(0, y - rect.height)}px`;
+    }
+  }, [x, y]);
 
   if (!node || !data) return null;
 

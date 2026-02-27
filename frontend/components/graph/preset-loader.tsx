@@ -61,16 +61,16 @@ export function PresetLoader({ open, onOpenChange }: PresetLoaderProps) {
               <Button
                 key={i}
                 variant="outline"
-                className="w-full h-auto py-4 px-5 flex flex-col items-start text-left gap-1.5 shrink-0"
+                className="w-full h-auto py-4 px-5 flex flex-col items-start text-left gap-1.5 shrink-0 whitespace-normal overflow-hidden"
                 onClick={() => handleSelect(i)}
               >
-                <div className="flex items-center gap-2">
-                  <span className="font-semibold text-base">{preset.name}</span>
-                  <Badge variant="secondary" className="text-[10px]">
+                <div className="flex items-center gap-2 w-full min-w-0">
+                  <span className="font-semibold text-base truncate">{preset.name}</span>
+                  <Badge variant="secondary" className="text-[10px] shrink-0">
                     {preset.nodes.length} nodes
                   </Badge>
                 </div>
-                <span className="text-sm text-muted-foreground font-normal leading-relaxed">
+                <span className="text-sm text-muted-foreground font-normal leading-relaxed whitespace-normal break-words w-full">
                   {preset.description}
                 </span>
               </Button>

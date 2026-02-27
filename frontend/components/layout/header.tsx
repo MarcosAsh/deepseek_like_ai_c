@@ -69,6 +69,7 @@ export function Header() {
             size="icon"
             onClick={openSearch}
             className="sm:hidden"
+            aria-label="Open search"
           >
             <Search className="h-4 w-4" />
           </Button>

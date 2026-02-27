@@ -29,13 +29,13 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
       )}
     >
       {/* Header */}
-      <div className="flex items-center justify-between gap-2 px-4 py-2.5 border-b bg-muted/50 rounded-t-lg">
-        <span className="text-sm font-semibold truncate">
+      <div className="flex items-center justify-between gap-2 px-4 py-2.5 border-b bg-muted/50 rounded-t-lg min-w-0">
+        <span className="text-sm font-semibold truncate min-w-0">
           {nodeData.moduleType}
         </span>
         <Badge
           variant="secondary"
-          className={cn("text-[10px] px-1.5 py-0", CATEGORY_COLORS[nodeData.category])}
+          className={cn("text-[10px] px-1.5 py-0 shrink-0", CATEGORY_COLORS[nodeData.category])}
         >
           {nodeData.category}
         </Badge>

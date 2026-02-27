@@ -64,7 +64,7 @@ void UnifiedMemoryManager::deallocate(void* ptr, std::size_t /*bytes*/) {
         bool is_pool = pool_ && (ptr >= pool_ && ptr < pool_ + max_on_chip_);
         if (!is_pool) {
             // Only free heap (fallback) allocations; pool memory uses a bump
-            // allocator and cannot reclaim interior blocks — it is reclaimed
+            // allocator and cannot reclaim interior blocks -- it is reclaimed
             // only when the entire pool is freed.
             std::free(ptr);
         }

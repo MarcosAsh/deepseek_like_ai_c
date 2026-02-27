@@ -26,7 +26,8 @@ async function fetchAPI<T>(
   });
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`API error ${res.status}: ${text}`);
+    const message = text.length > 200 ? text.slice(0, 200) + "..." : text;
+    throw new Error(`Request failed (${res.status}): ${message}`);
   }
   return res.json();
 }

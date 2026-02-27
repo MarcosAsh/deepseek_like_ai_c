@@ -8,3 +8,4 @@ frontend/.next/
 frontend/out/
 frontend/.env.local
 frontend/public/source/
+.vercel

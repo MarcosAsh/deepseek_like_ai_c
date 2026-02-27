@@ -90,7 +90,7 @@ export function GlobalSearch() {
                 <Blocks className="mr-2 h-4 w-4" />
                 <div className="flex flex-col">
                   <span className="text-sm">{mod.type}</span>
-                  <span className="text-xs text-muted-foreground truncate max-w-[300px]">
+                  <span className="text-xs text-muted-foreground truncate max-w-[200px] sm:max-w-[300px]">
                     {mod.description}
                   </span>
                 </div>

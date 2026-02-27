@@ -86,7 +86,7 @@ export function ExecutionDebugger({
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="max-w-3xl max-h-[85vh] flex flex-col">
+      <DialogContent className="w-[95vw] max-w-3xl max-h-[85vh] flex flex-col">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-3">
             Execution Debugger
@@ -119,7 +119,7 @@ export function ExecutionDebugger({
           </Button>
 
           {/* Step dots */}
-          <div className="flex items-center gap-1 flex-1 overflow-x-auto px-2">
+          <div className="flex items-center gap-1 flex-1 overflow-x-auto px-2 min-w-0">
             {executionOrder.map((nodeId, i) => {
               const node = nodes.find((n) => n.id === nodeId);
               const data = node?.data as CustomNodeData | undefined;
@@ -181,25 +181,27 @@ export function ExecutionDebugger({
                     </Badge>
                   </CardTitle>
                 </CardHeader>
-                <CardContent className="px-4 pb-4">
+                <CardContent className="px-4 pb-4 overflow-hidden">
                   {currentResult.error ? (
-                    <p className="text-sm text-destructive font-mono">
+                    <p className="text-sm text-destructive font-mono break-words">
                       {currentResult.error}
                     </p>
                   ) : (
-                    <div className="space-y-3">
+                    <div className="space-y-3 overflow-x-auto">
                       <p className="text-xs text-muted-foreground font-medium">
                         Outputs:
                       </p>
                       {Object.entries(currentResult.outputs).map(
                         ([name, tensorData]) => (
-                          <div key={name} className="space-y-1">
+                          <div key={name} className="space-y-1 min-w-0">
                             <p className="text-xs font-mono font-medium">
                               {name}
                             </p>
-                            <PortValueRenderer
-                              data={tensorData as TensorData}
-                            />
+                            <div className="overflow-x-auto max-w-full">
+                              <PortValueRenderer
+                                data={tensorData as TensorData}
+                              />
+                            </div>
                           </div>
                         )
                       )}

@@ -53,8 +53,8 @@ export function PortValueRenderer({ data }: { data: TensorData }) {
     const isSquare = data.shape[0] === data.shape[1];
 
     return (
-      <div className="space-y-3">
-        <div className="flex items-center gap-2">
+      <div className="space-y-3 min-w-0 max-w-full">
+        <div className="flex items-center gap-2 flex-wrap">
           <TensorShapeBadge shape={data.shape} />
           {data.truncated && (
             <span className="text-xs text-muted-foreground">
@@ -75,7 +75,7 @@ export function PortValueRenderer({ data }: { data: TensorData }) {
               <TabsTrigger value="attention">Attention</TabsTrigger>
             )}
           </TabsList>
-          <TabsContent value="heatmap" className="mt-2">
+          <TabsContent value="heatmap" className="mt-2 overflow-x-auto">
             <TensorHeatmap
               data={data.data}
               shape={data.shape}
@@ -83,11 +83,11 @@ export function PortValueRenderer({ data }: { data: TensorData }) {
               height={Math.min(400, data.shape[0] * 20)}
             />
           </TabsContent>
-          <TabsContent value="table" className="mt-2">
+          <TabsContent value="table" className="mt-2 overflow-x-auto">
             <TensorDataTable data={data.data} shape={data.shape} />
           </TabsContent>
           {isSquare && (
-            <TabsContent value="attention" className="mt-2">
+            <TabsContent value="attention" className="mt-2 overflow-x-auto">
               <AttentionPattern
                 data={data.data}
                 shape={data.shape}
@@ -99,7 +99,7 @@ export function PortValueRenderer({ data }: { data: TensorData }) {
 
         {/* Gradient overlay for AD_TENSOR */}
         {data.type === "AD_TENSOR" && data.grad && data.grad.data && (
-          <div className="border-t pt-3 mt-3">
+          <div className="border-t pt-3 mt-3 overflow-x-auto">
             <GradientOverlay
               data={data.grad.data}
               shape={data.grad.shape}
@@ -113,7 +113,7 @@ export function PortValueRenderer({ data }: { data: TensorData }) {
 
   // Fallback
   return (
-    <pre className="text-xs font-mono bg-muted p-2 rounded overflow-x-auto">
+    <pre className="text-xs font-mono bg-muted p-2 rounded overflow-x-auto max-h-[300px] overflow-y-auto">
       {JSON.stringify(data, null, 2)}
     </pre>
   );

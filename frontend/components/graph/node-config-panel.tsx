@@ -35,7 +35,7 @@ export function NodeConfigPanel() {
   const result = results.get(node.id);
 
   return (
-    <div className="w-80 border-l bg-muted/30 flex flex-col h-full overflow-hidden">
+    <div className="w-80 max-w-[90vw] border-l bg-muted/30 flex flex-col h-full overflow-hidden">
       <div className="flex items-center justify-between px-3 py-2 border-b shrink-0">
         <div className="flex items-center gap-2 min-w-0">
           <h3 className="text-sm font-semibold truncate">{data.moduleType}</h3>
@@ -101,7 +101,7 @@ export function NodeConfigPanel() {
             )}
           </TabsContent>
 
-          <TabsContent value="output" className="p-3 mt-0">
+          <TabsContent value="output" className="p-3 mt-0 overflow-hidden">
             <OutputTab nodeId={node.id} />
           </TabsContent>
 
@@ -149,7 +149,7 @@ function OutputTab({ nodeId }: { nodeId: string }) {
           <CardHeader className="py-2 px-3">
             <CardTitle className="text-xs font-mono">{name}</CardTitle>
           </CardHeader>
-          <CardContent className="px-3 pb-3">
+          <CardContent className="px-3 pb-3 overflow-x-auto">
             <PortValueRenderer data={tensorData as TensorData} />
           </CardContent>
         </Card>

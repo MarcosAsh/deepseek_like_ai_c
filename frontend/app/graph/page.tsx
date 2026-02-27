@@ -1,11 +1,12 @@
 "use client";
 
-import { Suspense, useEffect } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { GraphEditor } from "@/components/graph/graph-editor";
 import { useGraphStore } from "@/components/graph/hooks/use-graph-store";
 import { fromGraphDef } from "@/lib/graph-utils";
 import { fetchModules } from "@/lib/api";
+import { toast } from "sonner";
 
 function GraphLoader() {
   const searchParams = useSearchParams();
@@ -38,7 +39,7 @@ function GraphLoader() {
         setNodes(nodes);
         setEdges(edges);
       } catch {
-        // Invalid shared URL, ignore
+        toast.error("Failed to load shared graph. The link may be invalid.");
       }
     }
     loadShared();
