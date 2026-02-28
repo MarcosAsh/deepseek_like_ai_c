@@ -55,7 +55,7 @@ static void test_ndim_tensor() {
     assert(sq.shape[0] == 3);
     assert(sq.shape[1] == 4);
 
-    Tensor usq = Tensor({3, 4}).unsqueeze(0);
+    Tensor usq = Tensor(std::vector<int>{3, 4}).unsqueeze(0);
     assert(usq.ndim() == 3);
     assert(usq.shape[0] == 1);
 
