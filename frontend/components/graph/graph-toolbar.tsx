@@ -15,9 +15,12 @@ import {
   Share2,
   Bug,
   FileText,
+  ShieldCheck,
 } from "lucide-react";
 import { ExecutionHistory } from "./execution-history";
 import { ExecutionDebugger } from "./execution-debugger";
+import { ValidationPanel } from "./validation-panel";
+import { useGraphValidation } from "./hooks/use-graph-validation";
 import { toast } from "sonner";
 
 interface GraphToolbarProps {
@@ -37,10 +40,35 @@ export function GraphToolbar({ onLoadPreset }: GraphToolbarProps) {
     future,
     results,
     executionHistory,
+    validationResult,
+    setValidationResult,
   } = useGraphStore();
   const { execute } = useGraphExecution();
+  const { validate } = useGraphValidation();
   const [historyOpen, setHistoryOpen] = useState(false);
   const [debuggerOpen, setDebuggerOpen] = useState(false);
+
+  function handleValidate() {
+    const result = validate();
+    setValidationResult(result);
+    if (result.valid && result.warnings.length === 0) {
+      toast.success("Graph is valid");
+    } else if (result.valid) {
+      toast.warning(`Graph has ${result.warnings.length} warning(s)`);
+    } else {
+      toast.error(`Graph has ${result.errors.length} error(s)`);
+    }
+  }
+
+  function handleExecuteWithValidation() {
+    const result = validate();
+    setValidationResult(result);
+    if (!result.valid) {
+      toast.error(`Cannot execute: ${result.errors.length} validation error(s)`);
+      return;
+    }
+    execute();
+  }
 
   function handleExport() {
     const data = JSON.stringify(
@@ -227,13 +255,17 @@ export function GraphToolbar({ onLoadPreset }: GraphToolbarProps) {
 
   return (
     <div className="flex items-center gap-2 px-3 py-2 border-b bg-muted/30 flex-wrap">
-      <Button size="sm" onClick={execute} disabled={isExecuting}>
+      <Button size="sm" onClick={handleExecuteWithValidation} disabled={isExecuting}>
         {isExecuting ? (
           <Loader2 className="h-4 w-4 mr-1 animate-spin" />
         ) : (
           <Play className="h-4 w-4 mr-1" />
         )}
         Run
+      </Button>
+      <Button size="sm" variant="outline" onClick={handleValidate} title="Validate graph">
+        <ShieldCheck className="h-3.5 w-3.5 mr-1" />
+        Validate
       </Button>
       <Button size="sm" variant="outline" onClick={onLoadPreset}>
         Load Preset
@@ -308,6 +340,8 @@ export function GraphToolbar({ onLoadPreset }: GraphToolbarProps) {
         <Trash2 className="h-3 w-3 mr-1" />
         Clear All
       </Button>
+
+      <ValidationPanel result={validationResult} />
 
       <ExecutionHistory open={historyOpen} onOpenChange={setHistoryOpen} />
       <ExecutionDebugger open={debuggerOpen} onOpenChange={setDebuggerOpen} />

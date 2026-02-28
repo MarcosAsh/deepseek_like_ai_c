@@ -173,6 +173,15 @@ if(APPLE)
 endif()
 add_test(NAME advanced_modules_test COMMAND advanced_modules_test)
 
+# Vision test (Conv2D, Pool2D, BatchNorm2D, Flatten, CNN pipeline)
+add_executable(vision_test test/vision_test.cpp ${LIB_SOURCES})
+target_include_directories(vision_test PRIVATE include)
+if(APPLE)
+  target_compile_definitions(vision_test PRIVATE USE_ACCELERATE)
+  target_link_libraries(vision_test PRIVATE "-framework Accelerate")
+endif()
+add_test(NAME vision_test COMMAND vision_test)
+
 # BPE training tool
 add_executable(train_bpe src/train_bpe.cpp)
 target_include_directories(train_bpe PRIVATE include)

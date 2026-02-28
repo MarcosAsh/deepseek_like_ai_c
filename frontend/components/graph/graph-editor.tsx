@@ -113,7 +113,7 @@ function GraphEditorInner() {
           {
             ...connection,
             type: "custom",
-            data: { portType },
+            data: { portType, sourceNodeId: connection.source },
           },
           edges
         )

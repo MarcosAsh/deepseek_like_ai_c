@@ -5,7 +5,7 @@ import * as d3 from "d3";
 
 interface TensorHeatmapProps {
   data: number[];
-  shape: [number, number];
+  shape: number[];
   width?: number;
   height?: number;
 }
@@ -26,7 +26,9 @@ export function TensorHeatmap({
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    const [rows, cols] = shape;
+    // For >2D, display as rows=product(all but last), cols=last dim
+    const cols = shape[shape.length - 1] ?? 1;
+    const rows = shape.length <= 1 ? 1 : data.length / cols;
     const cellW = width / cols;
     const cellH = height / rows;
 
@@ -87,7 +89,8 @@ export function TensorHeatmap({
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
 
-    const [rows, cols] = shape;
+    const cols = shape[shape.length - 1] ?? 1;
+    const rows = shape.length <= 1 ? 1 : data.length / cols;
     const col = Math.floor((x / width) * cols);
     const row = Math.floor((y / height) * rows);
 

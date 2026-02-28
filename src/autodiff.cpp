@@ -10,7 +10,12 @@ ADTensor::ADTensor(int rows, int cols)
 }
 
 ADTensor::ADTensor(const Tensor& t)
-    : val(t), grad(t.rows, t.cols) {
+    : val(t), grad(t.shape) {
+    grad.fill(0.0f);
+}
+
+ADTensor::ADTensor(const std::vector<int>& shape)
+    : val(shape), grad(shape) {
     grad.fill(0.0f);
 }
 
@@ -322,6 +327,67 @@ std::shared_ptr<ADTensor> sum(const std::shared_ptr<ADTensor>& a) {
     out->deps.emplace_back(a, [a, out]() {
         float d = out->grad.data[0];
         for (float &g : a->grad.data) g += d;
+    });
+    return out;
+}
+
+// ReLU: max(0, x)
+std::shared_ptr<ADTensor> relu_ad(const std::shared_ptr<ADTensor>& a) {
+    Tensor v(a->val.shape);
+    for (size_t i = 0; i < v.data.size(); ++i) {
+        v.data[i] = a->val.data[i] > 0.0f ? a->val.data[i] : 0.0f;
+    }
+    auto out = std::make_shared<ADTensor>(v);
+    out->deps.emplace_back(a, [a, out]() {
+        for (size_t i = 0; i < a->grad.data.size(); ++i) {
+            if (a->val.data[i] > 0.0f) {
+                a->grad.data[i] += out->grad.data[i];
+            }
+        }
+    });
+    return out;
+}
+
+// Sigmoid: 1 / (1 + exp(-x))
+std::shared_ptr<ADTensor> sigmoid_ad(const std::shared_ptr<ADTensor>& a) {
+    Tensor v(a->val.shape);
+    for (size_t i = 0; i < v.data.size(); ++i) {
+        v.data[i] = 1.0f / (1.0f + std::exp(-a->val.data[i]));
+    }
+    auto out = std::make_shared<ADTensor>(v);
+    out->deps.emplace_back(a, [a, out]() {
+        for (size_t i = 0; i < a->grad.data.size(); ++i) {
+            float s = out->val.data[i];
+            a->grad.data[i] += out->grad.data[i] * s * (1.0f - s);
+        }
+    });
+    return out;
+}
+
+// Reshape (view)
+std::shared_ptr<ADTensor> reshape_ad(const std::shared_ptr<ADTensor>& a,
+                                      const std::vector<int>& new_shape) {
+    Tensor v = a->val.reshape(new_shape);
+    auto out = std::make_shared<ADTensor>(v);
+    auto orig_shape = a->val.shape;
+    out->deps.emplace_back(a, [a, out, orig_shape]() {
+        // Gradient flows through unchanged - just reshape back
+        for (size_t i = 0; i < a->grad.data.size(); ++i) {
+            a->grad.data[i] += out->grad.data[i];
+        }
+    });
+    return out;
+}
+
+// Flatten
+std::shared_ptr<ADTensor> flatten_ad(const std::shared_ptr<ADTensor>& a,
+                                      int start_dim, int end_dim) {
+    Tensor v = a->val.flatten(start_dim, end_dim);
+    auto out = std::make_shared<ADTensor>(v);
+    out->deps.emplace_back(a, [a, out]() {
+        for (size_t i = 0; i < a->grad.data.size(); ++i) {
+            a->grad.data[i] += out->grad.data[i];
+        }
     });
     return out;
 }

@@ -6,7 +6,7 @@ import { ChevronDown, ChevronUp } from "lucide-react";
 
 interface TensorDataTableProps {
   data: number[];
-  shape: [number, number];
+  shape: number[];
   maxRows?: number;
 }
 
@@ -16,7 +16,8 @@ export function TensorDataTable({
   maxRows = 10,
 }: TensorDataTableProps) {
   const [expanded, setExpanded] = useState(false);
-  const [rows, cols] = shape;
+  const cols = shape[shape.length - 1] ?? 1;
+  const rows = shape.length <= 1 ? data.length : data.length / cols;
   const displayRows = expanded ? rows : Math.min(rows, maxRows);
 
   return (

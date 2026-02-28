@@ -10,6 +10,11 @@ export const PORT_TYPE_COLORS: Record<PortType, string> = {
   INT: "#6b7280",        // gray-500
 };
 
+// Convenience alias + fallback
+export function getPortColor(type: PortType): string {
+  return PORT_TYPE_COLORS[type] ?? "#6b7280";
+}
+
 // Tailwind class variants for port type badges
 export const PORT_TYPE_BADGE_CLASSES: Record<PortType, string> = {
   TEXT: "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200",
@@ -33,6 +38,13 @@ export const CATEGORY_COLORS: Record<string, string> = {
   math: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200",
   loss: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200",
   training: "bg-pink-100 text-pink-800 dark:bg-pink-900 dark:text-pink-200",
+  vision: "bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200",
+  activation: "bg-lime-100 text-lime-800 dark:bg-lime-900 dark:text-lime-200",
+  regularization: "bg-fuchsia-100 text-fuchsia-800 dark:bg-fuchsia-900 dark:text-fuchsia-200",
+  pretrained: "bg-sky-100 text-sky-800 dark:bg-sky-900 dark:text-sky-200",
+  utility: "bg-stone-100 text-stone-800 dark:bg-stone-800 dark:text-stone-200",
+  generation: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200",
+  moe: "bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200",
 };
 
 // Category display names
@@ -48,6 +60,13 @@ export const CATEGORY_LABELS: Record<string, string> = {
   math: "Math Operations",
   loss: "Loss",
   training: "Training",
+  vision: "Vision",
+  activation: "Activation",
+  regularization: "Regularization",
+  pretrained: "Pretrained",
+  utility: "Utility",
+  generation: "Generation",
+  moe: "Mixture of Experts",
 };
 
 // Hex colors for minimap node coloring
@@ -63,6 +82,13 @@ export const CATEGORY_COLORS_HEX: Record<string, string> = {
   math: "#10b981",         // emerald-500
   loss: "#ef4444",         // red-500
   training: "#ec4899",     // pink-500
+  vision: "#6366f1",       // indigo-500
+  activation: "#84cc16",   // lime-500
+  regularization: "#d946ef", // fuchsia-500
+  pretrained: "#0ea5e9",   // sky-500
+  utility: "#78716c",      // stone-500
+  generation: "#eab308",   // yellow-500
+  moe: "#a855f7",          // purple-500
 };
 
 // All categories in display order
@@ -75,7 +101,14 @@ export const ALL_CATEGORIES: ModuleCategory[] = [
   "feedforward",
   "linear",
   "transformer",
+  "vision",
+  "activation",
+  "regularization",
   "math",
   "loss",
   "training",
+  "pretrained",
+  "utility",
+  "generation",
+  "moe",
 ];

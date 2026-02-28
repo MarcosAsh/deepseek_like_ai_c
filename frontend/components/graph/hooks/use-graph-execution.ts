@@ -16,6 +16,8 @@ export function useGraphExecution() {
     setResults,
     setIsExecuting,
     setExecutingNodeId,
+    setFlowingEdgeIds,
+    setCompletedNodeIds,
     addExecutionSnapshot,
   } = useGraphStore();
 
@@ -27,6 +29,8 @@ export function useGraphExecution() {
 
     setIsExecuting(true);
     setExecutingNodeId(null);
+    setFlowingEdgeIds(new Set());
+    setCompletedNodeIds(new Set());
 
     try {
       const graphDef = toGraphDef(nodes, edges);
@@ -47,6 +51,8 @@ export function useGraphExecution() {
 
       // Animate through execution order step by step
       const resultsMap = new Map<string, NodeResult>();
+      const completed = new Set<string>();
+
       for (const nodeId of executionOrder) {
         setExecutingNodeId(nodeId);
         const nr = nodeResults.find((r) => r.node_id === nodeId);
@@ -54,7 +60,22 @@ export function useGraphExecution() {
           resultsMap.set(nr.node_id, nr);
           setResults(new Map(resultsMap));
         }
+
+        // Mark node as completed and find outgoing edges to animate
+        completed.add(nodeId);
+        setCompletedNodeIds(new Set(completed));
+
+        const outgoingEdgeIds = edges
+          .filter((e) => e.source === nodeId)
+          .map((e) => e.id);
+        if (outgoingEdgeIds.length > 0) {
+          setFlowingEdgeIds(new Set(outgoingEdgeIds));
+        }
+
         await delay(200);
+
+        // Clear flowing edges after animation
+        setFlowingEdgeIds(new Set());
       }
       setExecutingNodeId(null);
 
@@ -97,8 +118,9 @@ export function useGraphExecution() {
     } finally {
       setIsExecuting(false);
       setExecutingNodeId(null);
+      setFlowingEdgeIds(new Set());
     }
-  }, [nodes, edges, setResults, setIsExecuting, setExecutingNodeId, addExecutionSnapshot]);
+  }, [nodes, edges, setResults, setIsExecuting, setExecutingNodeId, setFlowingEdgeIds, setCompletedNodeIds, addExecutionSnapshot]);
 
   return { execute };
 }

@@ -6,7 +6,7 @@ import type { TensorStats } from "@/lib/types";
 
 interface GradientOverlayProps {
   data: number[];
-  shape: [number, number];
+  shape: number[];
   stats?: TensorStats;
 }
 

@@ -1,5 +1,5 @@
 import { Handle, Position } from "@xyflow/react";
-import { getPortColor } from "@/lib/port-colors";
+import { getPortColor } from "@/lib/constants";
 import type { PortType } from "@/lib/types";
 
 interface PortHandleProps {

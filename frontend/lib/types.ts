@@ -23,13 +23,13 @@ export interface ModulesResponse {
 // Tensor data as serialized by the backend
 export interface TensorData {
   type: PortType;
-  shape?: [number, number];
+  shape?: number[];
   data?: number[];
   value?: unknown;
   stats?: TensorStats;
   truncated?: boolean;
   grad?: {
-    shape: [number, number];
+    shape: number[];
     data: number[];
     stats: TensorStats;
     truncated: boolean;
@@ -155,6 +155,13 @@ export type ModuleCategory =
   | "feedforward"
   | "linear"
   | "transformer"
+  | "vision"
+  | "activation"
+  | "regularization"
   | "math"
   | "loss"
-  | "training";
+  | "training"
+  | "pretrained"
+  | "utility"
+  | "generation"
+  | "moe";

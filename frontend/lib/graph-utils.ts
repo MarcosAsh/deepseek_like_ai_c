@@ -72,7 +72,7 @@ export function fromGraphDef(
       target: ed.target_node,
       targetHandle: ed.target_port,
       type: "custom",
-      data: { portType: sourcePort?.type },
+      data: { portType: sourcePort?.type, sourceNodeId: ed.source_node },
     };
   });
 

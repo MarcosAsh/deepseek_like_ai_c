@@ -2,6 +2,7 @@ import { create } from "zustand";
 import type { Node, Edge } from "@xyflow/react";
 import type { CustomNodeData } from "@/lib/graph-utils";
 import type { NodeResult, GraphResult } from "@/lib/types";
+import type { ValidationResult } from "./use-graph-validation";
 
 interface HistoryEntry {
   nodes: Node<CustomNodeData>[];
@@ -24,9 +25,16 @@ interface GraphState {
   isExecuting: boolean;
   executingNodeId: string | null;
 
+  // Animation state
+  flowingEdgeIds: Set<string>;
+  completedNodeIds: Set<string>;
+
   // Undo/redo
   history: HistoryEntry[];
   future: HistoryEntry[];
+
+  // Validation
+  validationResult: ValidationResult | null;
 
   // Execution history
   executionHistory: ExecutionSnapshot[];
@@ -46,6 +54,9 @@ interface GraphState {
   setResults: (results: Map<string, NodeResult>) => void;
   setIsExecuting: (v: boolean) => void;
   setExecutingNodeId: (id: string | null) => void;
+  setFlowingEdgeIds: (ids: Set<string>) => void;
+  setCompletedNodeIds: (ids: Set<string>) => void;
+  setValidationResult: (r: ValidationResult | null) => void;
   clearResults: () => void;
   clearAll: () => void;
 
@@ -66,6 +77,9 @@ export const useGraphStore = create<GraphState>((set, get) => ({
   results: new Map(),
   isExecuting: false,
   executingNodeId: null,
+  flowingEdgeIds: new Set(),
+  completedNodeIds: new Set(),
+  validationResult: null,
   history: [],
   future: [],
   executionHistory: [],
@@ -118,7 +132,10 @@ export const useGraphStore = create<GraphState>((set, get) => ({
   setResults: (results) => set({ results }),
   setIsExecuting: (v) => set({ isExecuting: v }),
   setExecutingNodeId: (id) => set({ executingNodeId: id }),
-  clearResults: () => set({ results: new Map(), executingNodeId: null }),
+  setFlowingEdgeIds: (ids) => set({ flowingEdgeIds: ids }),
+  setCompletedNodeIds: (ids) => set({ completedNodeIds: ids }),
+  setValidationResult: (r) => set({ validationResult: r }),
+  clearResults: () => set({ results: new Map(), executingNodeId: null, flowingEdgeIds: new Set(), completedNodeIds: new Set() }),
   clearAll: () =>
     set({
       nodes: [],
@@ -128,6 +145,9 @@ export const useGraphStore = create<GraphState>((set, get) => ({
       history: [],
       future: [],
       executingNodeId: null,
+      flowingEdgeIds: new Set(),
+      completedNodeIds: new Set(),
+      validationResult: null,
     }),
 
   // Undo/redo

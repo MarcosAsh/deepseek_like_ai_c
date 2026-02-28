@@ -12,6 +12,7 @@ struct ADTensor {
     std::vector<std::pair<std::shared_ptr<ADTensor>, std::function<void()>>> deps;
     ADTensor(int rows, int cols);
     ADTensor(const Tensor& t);
+    ADTensor(const std::vector<int>& shape);
     void backward();
 };
 
@@ -40,3 +41,11 @@ std::shared_ptr<ADTensor> transpose(const std::shared_ptr<ADTensor>& a);
 std::shared_ptr<ADTensor> slice(const std::shared_ptr<ADTensor>& a,
                                  int row_offset, int row_count);
 std::shared_ptr<ADTensor> concat(const std::vector<std::shared_ptr<ADTensor>>& parts);
+
+// N-dim operations
+std::shared_ptr<ADTensor> relu_ad(const std::shared_ptr<ADTensor>& a);
+std::shared_ptr<ADTensor> sigmoid_ad(const std::shared_ptr<ADTensor>& a);
+std::shared_ptr<ADTensor> reshape_ad(const std::shared_ptr<ADTensor>& a,
+                                      const std::vector<int>& new_shape);
+std::shared_ptr<ADTensor> flatten_ad(const std::shared_ptr<ADTensor>& a,
+                                      int start_dim = 0, int end_dim = -1);

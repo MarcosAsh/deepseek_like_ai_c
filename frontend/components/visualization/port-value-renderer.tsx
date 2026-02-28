@@ -8,7 +8,20 @@ import { TokenDisplay } from "./token-display";
 import { GradientOverlay } from "./gradient-overlay";
 import { TensorShapeBadge } from "./tensor-shape-badge";
 import { AttentionPattern } from "./attention-pattern";
+import { NdimTensorViewer } from "./ndim-tensor-viewer";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+
+function is2D(shape: number[]): boolean {
+  return shape.length === 2;
+}
+
+function isImageLike(shape: number[]): boolean {
+  // [B, C, H, W] or [C, H, W]
+  return (
+    (shape.length === 4 && shape[1] >= 1 && shape[1] <= 4) ||
+    (shape.length === 3 && shape[0] >= 1 && shape[0] <= 4)
+  );
+}
 
 export function PortValueRenderer({ data }: { data: TensorData }) {
   // TEXT type
@@ -50,12 +63,48 @@ export function PortValueRenderer({ data }: { data: TensorData }) {
     data.shape &&
     data.data
   ) {
-    const isSquare = data.shape[0] === data.shape[1];
+    const shape = data.shape;
+    const ndim = shape.length;
+
+    // For >2D tensors, use the N-dim viewer
+    if (ndim > 2) {
+      return (
+        <div className="space-y-3 min-w-0 max-w-full">
+          <div className="flex items-center gap-2 flex-wrap">
+            <TensorShapeBadge shape={shape} />
+            {data.truncated && (
+              <span className="text-xs text-muted-foreground">
+                (truncated to {data.data.length} values)
+              </span>
+            )}
+          </div>
+
+          {data.stats && <TensorStatsCard stats={data.stats} shape={shape} />}
+
+          <NdimTensorViewer data={data.data} shape={shape} />
+
+          {data.type === "AD_TENSOR" && data.grad && data.grad.data && (
+            <div className="border-t pt-3 mt-3 overflow-x-auto">
+              <GradientOverlay
+                data={data.grad.data}
+                shape={data.grad.shape}
+                stats={data.grad.stats}
+              />
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // 2D and 1D tensors - original behavior
+    const rows = shape[0] ?? 1;
+    const cols = shape[1] ?? 1;
+    const isSquare = rows === cols && rows > 1;
 
     return (
       <div className="space-y-3 min-w-0 max-w-full">
         <div className="flex items-center gap-2 flex-wrap">
-          <TensorShapeBadge shape={data.shape} />
+          <TensorShapeBadge shape={shape} />
           {data.truncated && (
             <span className="text-xs text-muted-foreground">
               (truncated to {data.data.length} values)
@@ -64,7 +113,7 @@ export function PortValueRenderer({ data }: { data: TensorData }) {
         </div>
 
         {data.stats && (
-          <TensorStatsCard stats={data.stats} shape={data.shape} />
+          <TensorStatsCard stats={data.stats} shape={shape} />
         )}
 
         <Tabs defaultValue="heatmap">
@@ -78,19 +127,19 @@ export function PortValueRenderer({ data }: { data: TensorData }) {
           <TabsContent value="heatmap" className="mt-2 overflow-x-auto">
             <TensorHeatmap
               data={data.data}
-              shape={data.shape}
-              width={Math.min(600, data.shape[1] * 20)}
-              height={Math.min(400, data.shape[0] * 20)}
+              shape={shape}
+              width={Math.min(600, cols * 20)}
+              height={Math.min(400, rows * 20)}
             />
           </TabsContent>
           <TabsContent value="table" className="mt-2 overflow-x-auto">
-            <TensorDataTable data={data.data} shape={data.shape} />
+            <TensorDataTable data={data.data} shape={shape} />
           </TabsContent>
           {isSquare && (
             <TabsContent value="attention" className="mt-2 overflow-x-auto">
               <AttentionPattern
                 data={data.data}
-                shape={data.shape}
+                shape={shape}
                 stats={data.stats}
               />
             </TabsContent>

@@ -6,7 +6,7 @@ import type { NodeProps } from "@xyflow/react";
 import { Badge } from "@/components/ui/badge";
 import { CATEGORY_COLORS } from "@/lib/constants";
 import { cn } from "@/lib/utils";
-import { getPortColor } from "@/lib/port-colors";
+import { getPortColor } from "@/lib/constants";
 import { NodeOutputPreview } from "./node-output-preview";
 import { useGraphStore } from "./hooks/use-graph-store";
 import type { CustomNodeData } from "@/lib/graph-utils";
@@ -16,18 +16,36 @@ function CustomNodeComponent({ id, data, selected }: NodeProps) {
   const nodeData = data as unknown as CustomNodeData;
   const results = useGraphStore((s) => s.results);
   const executingNodeId = useGraphStore((s) => s.executingNodeId);
+  const completedNodeIds = useGraphStore((s) => s.completedNodeIds);
+  const validationResult = useGraphStore((s) => s.validationResult);
   const result = results.get(id);
   const isExecuting = executingNodeId === id;
+  const isCompleted = completedNodeIds.has(id);
+
+  const hasValidationError = validationResult?.errors.some((e) => e.nodeId === id) ?? false;
+  const hasValidationWarning = validationResult?.warnings.some((w) => w.nodeId === id) ?? false;
 
   return (
     <div
       className={cn(
-        "bg-card border rounded-lg shadow-sm min-w-[240px] relative transition-shadow",
+        "bg-card border rounded-lg shadow-sm min-w-[240px] relative transition-all duration-300",
         selected && "ring-2 ring-primary",
         result?.error && "border-destructive",
-        isExecuting && "ring-2 ring-blue-500 animate-pulse shadow-lg shadow-blue-500/20"
+        isExecuting && "ring-2 ring-blue-500 animate-pulse shadow-lg shadow-blue-500/20",
+        isCompleted && !result?.error && "shadow-md shadow-emerald-500/20 border-emerald-500/40"
       )}
     >
+      {/* Validation indicator */}
+      {(hasValidationError || hasValidationWarning) && (
+        <div
+          className={cn(
+            "absolute -top-1.5 -right-1.5 w-3 h-3 rounded-full border-2 border-background z-10",
+            hasValidationError ? "bg-red-500" : "bg-yellow-500"
+          )}
+          title={hasValidationError ? "Has validation errors" : "Has validation warnings"}
+        />
+      )}
+
       {/* Header */}
       <div className="flex items-center justify-between gap-2 px-4 py-2.5 border-b bg-muted/50 rounded-t-lg min-w-0">
         <span className="text-sm font-semibold truncate min-w-0">

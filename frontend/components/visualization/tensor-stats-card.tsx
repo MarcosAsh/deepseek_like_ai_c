@@ -8,8 +8,9 @@ export function TensorStatsCard({
   shape,
 }: {
   stats: TensorStats;
-  shape: [number, number];
+  shape: number[];
 }) {
+  const elements = shape.reduce((a, b) => a * b, 1);
   return (
     <Card>
       <CardContent className="py-3 px-4">
@@ -17,12 +18,12 @@ export function TensorStatsCard({
           <div className="font-mono">
             <span className="text-muted-foreground text-xs">Shape:</span>{" "}
             <span className="font-semibold">
-              [{shape[0]} x {shape[1]}]
+              [{shape.join(" x ")}]
             </span>
           </div>
           <div className="font-mono">
             <span className="text-muted-foreground text-xs">Elements:</span>{" "}
-            <span>{shape[0] * shape[1]}</span>
+            <span>{elements}</span>
           </div>
           <div className="font-mono">
             <span className="text-muted-foreground text-xs">Min:</span>{" "}

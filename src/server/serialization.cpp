@@ -28,7 +28,7 @@ static json compute_stats(const std::vector<float, UnifiedMemoryAllocator<float>
 
 json tensor_to_json(const Tensor& t, int max_elements) {
     json j;
-    j["shape"] = {t.rows, t.cols};
+    j["shape"] = t.shape;
     j["stats"] = compute_stats(t.data);
 
     int total = static_cast<int>(t.data.size());
@@ -55,14 +55,16 @@ json ad_tensor_to_json(const std::shared_ptr<ADTensor>& t,
 }
 
 Tensor tensor_from_json(const json& j) {
-    auto shape = j["shape"];
-    int rows = shape[0].get<int>();
-    int cols = shape[1].get<int>();
-    Tensor t(rows, cols);
+    auto shape_json = j["shape"];
+    std::vector<int> shape;
+    for (auto& dim : shape_json) {
+        shape.push_back(dim.get<int>());
+    }
+    Tensor t(shape);
 
     if (j.contains("data")) {
         auto& data = j["data"];
-        int n = std::min(static_cast<int>(data.size()), rows * cols);
+        int n = std::min(static_cast<int>(data.size()), t.numel());
         for (int i = 0; i < n; i++) {
             t.data[i] = data[i].get<float>();
         }
