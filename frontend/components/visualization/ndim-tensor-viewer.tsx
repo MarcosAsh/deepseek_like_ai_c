@@ -17,10 +17,19 @@ export function NdimTensorViewer({ data, shape }: NdimTensorViewerProps) {
   // and display the last 2 dims as a 2D matrix
   const ndim = shape.length;
 
+  // For >2D: leading dims are selectable, last 2 dims are the matrix
+  const leadingDims = ndim > 2 ? shape.slice(0, ndim - 2) : [];
+  const matRows = ndim > 2 ? shape[ndim - 2] : (ndim === 1 ? 1 : shape[0]);
+  const matCols = ndim > 2 ? shape[ndim - 1] : (ndim === 1 ? shape[0] : shape[1]);
+  const matSize = matRows * matCols;
+
+  // Total number of 2D slices
+  const totalSlices = leadingDims.reduce((a, b) => a * b, 1);
+
+  const [sliceIndex, setSliceIndex] = useState(0);
+
   // If 1D or 2D, just display directly
   if (ndim <= 2) {
-    const rows = ndim === 1 ? 1 : shape[0];
-    const cols = ndim === 1 ? shape[0] : shape[1];
     return (
       <Tabs defaultValue="heatmap">
         <TabsList>
@@ -31,8 +40,8 @@ export function NdimTensorViewer({ data, shape }: NdimTensorViewerProps) {
           <TensorHeatmap
             data={data}
             shape={shape}
-            width={Math.min(600, cols * 20)}
-            height={Math.min(400, rows * 20)}
+            width={Math.min(600, matCols * 20)}
+            height={Math.min(400, matRows * 20)}
           />
         </TabsContent>
         <TabsContent value="table" className="mt-2 overflow-x-auto">
@@ -41,17 +50,6 @@ export function NdimTensorViewer({ data, shape }: NdimTensorViewerProps) {
       </Tabs>
     );
   }
-
-  // For >2D: leading dims are selectable, last 2 dims are the matrix
-  const leadingDims = shape.slice(0, ndim - 2);
-  const matRows = shape[ndim - 2];
-  const matCols = shape[ndim - 1];
-  const matSize = matRows * matCols;
-
-  // Total number of 2D slices
-  const totalSlices = leadingDims.reduce((a, b) => a * b, 1);
-
-  const [sliceIndex, setSliceIndex] = useState(0);
 
   // Extract 2D slice from flat data
   const sliceOffset = sliceIndex * matSize;

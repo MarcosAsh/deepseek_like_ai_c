@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { fetchModules } from "@/lib/api";
@@ -19,7 +19,6 @@ import {
   BookOpen,
   GraduationCap,
   GitFork,
-  FileText,
 } from "lucide-react";
 
 export function GlobalSearch() {

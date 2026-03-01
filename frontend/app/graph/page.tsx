@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
 import { GraphEditor } from "@/components/graph/graph-editor";
 import { useGraphStore } from "@/components/graph/hooks/use-graph-store";

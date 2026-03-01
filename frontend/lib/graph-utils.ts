@@ -43,7 +43,7 @@ export function fromGraphDef(
 ): { nodes: Node<CustomNodeData>[]; edges: Edge[] } {
   const catalogMap = new Map(catalog.map((m) => [m.type, m]));
 
-  const nodes: Node<CustomNodeData>[] = graphDef.nodes.map((nd, i) => {
+  const nodes: Node<CustomNodeData>[] = graphDef.nodes.map((nd) => {
     const mod = catalogMap.get(nd.type);
     return {
       id: nd.id,
@@ -60,7 +60,7 @@ export function fromGraphDef(
     };
   });
 
-  const edges: Edge[] = graphDef.edges.map((ed, i) => {
+  const edges: Edge[] = graphDef.edges.map((ed) => {
     // Find the source port type for edge coloring
     const sourceNode = nodes.find((n) => n.id === ed.source_node);
     const sourceData = sourceNode?.data as CustomNodeData | undefined;

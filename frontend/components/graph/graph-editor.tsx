@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -28,7 +28,7 @@ import { NodeConfigPanel } from "./node-config-panel";
 import { NodeContextMenu } from "./node-context-menu";
 import { useGraphStore } from "./hooks/use-graph-store";
 import { useEdgeValidation } from "./hooks/use-edge-validation";
-import type { ModuleCatalogEntry, PortType } from "@/lib/types";
+import type { ModuleCatalogEntry } from "@/lib/types";
 import type { CustomNodeData } from "@/lib/graph-utils";
 import { CATEGORY_COLORS_HEX } from "@/lib/constants";
 
@@ -162,12 +162,12 @@ function GraphEditorInner() {
       if (!moduleJson) return;
 
       try {
-        const module: ModuleCatalogEntry = JSON.parse(moduleJson);
+        const mod: ModuleCatalogEntry = JSON.parse(moduleJson);
         const position = screenToFlowPosition({
           x: e.clientX,
           y: e.clientY,
         });
-        handleAddModule(module, position);
+        handleAddModule(mod, position);
       } catch {
         // invalid JSON, ignore
       }

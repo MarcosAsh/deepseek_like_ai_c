@@ -17,7 +17,7 @@ export default function ModulesPage() {
     queryFn: fetchModules,
   });
 
-  const modules = data?.modules ?? [];
+  const modules = useMemo(() => data?.modules ?? [], [data]);
 
   const categories = useMemo(
     () => [...new Set(modules.map((m) => m.category))],

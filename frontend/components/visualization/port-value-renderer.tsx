@@ -11,18 +11,6 @@ import { AttentionPattern } from "./attention-pattern";
 import { NdimTensorViewer } from "./ndim-tensor-viewer";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
-function is2D(shape: number[]): boolean {
-  return shape.length === 2;
-}
-
-function isImageLike(shape: number[]): boolean {
-  // [B, C, H, W] or [C, H, W]
-  return (
-    (shape.length === 4 && shape[1] >= 1 && shape[1] <= 4) ||
-    (shape.length === 3 && shape[0] >= 1 && shape[0] <= 4)
-  );
-}
-
 export function PortValueRenderer({ data }: { data: TensorData }) {
   // TEXT type
   if (data.type === "TEXT") {

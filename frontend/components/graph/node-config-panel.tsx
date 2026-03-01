@@ -169,12 +169,21 @@ function CodeTab({ moduleType }: { moduleType: string }) {
 
   useEffect(() => {
     if (!selectedFile) return;
+    let cancelled = false;
     setLoading(true);
-    fetch(getSourceUrl(selectedFile))
-      .then((res) => (res.ok ? res.text() : "// Source file not available"))
-      .then(setSourceCode)
-      .catch(() => setSourceCode("// Failed to load source"))
-      .finally(() => setLoading(false));
+    const load = async () => {
+      try {
+        const res = await fetch(getSourceUrl(selectedFile));
+        const code = res.ok ? await res.text() : "// Source file not available";
+        if (!cancelled) setSourceCode(code);
+      } catch {
+        if (!cancelled) setSourceCode("// Failed to load source");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+    load();
+    return () => { cancelled = true; };
   }, [selectedFile]);
 
   if (allFiles.length === 0) {

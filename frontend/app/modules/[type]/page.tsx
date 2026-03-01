@@ -42,7 +42,7 @@ export default function ModuleDetailPage() {
     queryFn: fetchModules,
   });
 
-  const module = data?.modules.find((m) => m.type === moduleType);
+  const mod = data?.modules.find((m) => m.type === moduleType);
 
   // Source code loading
   const sourceFiles = MODULE_SOURCE_FILES[moduleType];
@@ -59,15 +59,24 @@ export default function ModuleDetailPage() {
 
   useEffect(() => {
     if (!selectedFile) return;
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const res = await fetch(getSourceUrl(selectedFile));
+        const code = res.ok ? await res.text() : "// Source file not available";
+        if (!cancelled) {
+          setSourceCode(code);
+          setEditMode(false);
+        }
+      } catch {
+        if (!cancelled) setSourceCode("// Failed to load source");
+      } finally {
+        if (!cancelled) setSourceLoading(false);
+      }
+    };
     setSourceLoading(true);
-    setEditMode(false);
-    fetch(getSourceUrl(selectedFile))
-      .then((res) => (res.ok ? res.text() : "// Source file not available"))
-      .then((code) => {
-        setSourceCode(code);
-      })
-      .catch(() => setSourceCode("// Failed to load source"))
-      .finally(() => setSourceLoading(false));
+    load();
+    return () => { cancelled = true; };
   }, [selectedFile]);
 
   // Set initial file selection when module loads
@@ -75,7 +84,8 @@ export default function ModuleDetailPage() {
     if (allFiles.length > 0 && !selectedFile) {
       setSelectedFile(allFiles[0]);
     }
-  }, [moduleType]); // eslint-disable-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [moduleType]);
 
   if (isLoading) {
     return (
@@ -87,7 +97,7 @@ export default function ModuleDetailPage() {
     );
   }
 
-  if (!module) {
+  if (!mod) {
     return (
       <div className="container mx-auto max-w-7xl px-4 py-8">
         <h1 className="text-2xl font-bold">Module not found: {moduleType}</h1>
@@ -102,7 +112,7 @@ export default function ModuleDetailPage() {
 
   return (
     <div className="container mx-auto max-w-7xl px-4 py-8">
-      <ModuleDetailHeader module={module} />
+      <ModuleDetailHeader module={mod} />
 
       <Tabs defaultValue="interactive" className="mt-6">
         <TabsList>
@@ -113,7 +123,7 @@ export default function ModuleDetailPage() {
 
         <TabsContent value="interactive" className="mt-4">
           <div className="max-w-2xl">
-            <ModuleExecutor module={module} />
+            <ModuleExecutor module={mod} />
           </div>
         </TabsContent>
 
@@ -235,7 +245,7 @@ export default function ModuleDetailPage() {
                 <div dangerouslySetInnerHTML={{ __html: docs }} />
               ) : (
                 <p className="text-muted-foreground">
-                  Documentation for {module.type} is coming soon.
+                  Documentation for {mod.type} is coming soon.
                 </p>
               )}
             </CardContent>

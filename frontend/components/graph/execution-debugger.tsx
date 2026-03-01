@@ -19,7 +19,7 @@ import {
   SkipBack,
   SkipForward,
 } from "lucide-react";
-import type { TensorData, NodeResult } from "@/lib/types";
+import type { TensorData } from "@/lib/types";
 import type { CustomNodeData } from "@/lib/graph-utils";
 
 interface ExecutionDebuggerProps {
@@ -35,7 +35,10 @@ export function ExecutionDebugger({
   const latestExecution = executionHistory[0];
   const [currentStep, setCurrentStep] = useState(0);
 
-  const executionOrder = latestExecution?.executionOrder ?? [];
+  const executionOrder = useMemo(
+    () => latestExecution?.executionOrder ?? [],
+    [latestExecution]
+  );
   const totalSteps = executionOrder.length;
 
   const currentNodeId = executionOrder[currentStep];
